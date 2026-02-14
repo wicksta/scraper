@@ -199,7 +199,7 @@ Objects present in `public`:
 - Worker only claims queued jobs where `ons_code` and `application_ref` are both present.
 - Worker resolves `site_url`/`scraper_entrypoint`/`mapper_path` from `lpa_scrape_configs`.
 - Worker rejects absolute paths, parent traversal, and out-of-repo paths.
-- Worker currently allowlists scraper entrypoint to `scraper.cjs`.
+- Worker currently allowlists scraper entrypoints to `scraper.cjs`, `scraper_camden_northgate.cjs`, `scraper_camden_accountforms.cjs`, and `scraper_camden_socrata.cjs`.
 - Worker currently requires mapper paths to be `mappers/*.cjs`.
 - Import `./bootstrap.js` first in scripts that require `.env` variables.
 - If connection drops, listener reconnect logic is required because `LISTEN` state is per-connection.

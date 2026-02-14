@@ -12,7 +12,12 @@ const CHANNEL = "scrape_job_created";
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}:${process.pid}`;
 const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 15 * 60 * 1000);
 const PROJECT_ROOT = process.cwd();
-const ALLOWED_SCRAPER_ENTRYPOINTS = new Set(["scraper.cjs"]);
+const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
+  "scraper.cjs",
+  "scraper_camden_northgate.cjs",
+  "scraper_camden_accountforms.cjs",
+  "scraper_camden_socrata.cjs",
+]);
 
 let client;
 let draining = false;
