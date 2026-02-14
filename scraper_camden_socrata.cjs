@@ -24,6 +24,8 @@ const argv = yargs(hideBin(process.argv))
   .option('area-name', { type: 'string', describe: 'LPA name', demandOption: false })
   .option('ons-code', { type: 'string', describe: 'ONS code', demandOption: false })
   .option('output', { type: 'string', describe: 'Optional output file path for UNIFIED JSON', demandOption: false })
+  .option('artifacts', { type: 'boolean', describe: 'Write JSON artifacts to disk', default: false })
+  .option('emit-json', { type: 'boolean', describe: 'Emit UNIFIED/PLANIT JSON to stdout (worker-friendly)', default: true })
   .strict()
   .help()
   .argv;
@@ -280,8 +282,14 @@ async function fetchJson(url) {
     ? (path.isAbsolute(argv.output) ? argv.output : path.resolve(process.cwd(), argv.output))
     : path.resolve(process.cwd(), `${base}_UNIFIED.json`);
 
-  fs.writeFileSync(unifiedPath, JSON.stringify(unified, null, 2), 'utf8');
-  console.log(`\n✅ Unified JSON: ${unifiedPath}`);
+  if (argv.output || argv.artifacts) {
+    fs.writeFileSync(unifiedPath, JSON.stringify(unified, null, 2), 'utf8');
+    console.log(`\n✅ Unified JSON: ${unifiedPath}`);
+  }
+
+  if (!process.argv.includes('--no-emit-json')) {
+    console.log(`__UNIFIED_JSON__=${JSON.stringify(unified)}`);
+  }
 
   if (mapper) {
     const ctx = {
@@ -300,8 +308,13 @@ async function fetchJson(url) {
     planit.url = planit.url || planit.source_url;
 
     const planitPath = path.resolve(process.cwd(), `${base}_PLANIT.json`);
-    fs.writeFileSync(planitPath, JSON.stringify(mapped, null, 2), 'utf8');
-    console.log(`✅ PlanIt-mapped JSON: ${planitPath}`);
+    if (argv.artifacts) {
+      fs.writeFileSync(planitPath, JSON.stringify(mapped, null, 2), 'utf8');
+      console.log(`✅ PlanIt-mapped JSON: ${planitPath}`);
+    }
+    if (!process.argv.includes('--no-emit-json')) {
+      console.log(`__PLANIT_JSON__=${JSON.stringify(mapped)}`);
+    }
   } else {
     console.log('ℹ️ No mapper provided (--mapper). Skipping PlanIt mapping step.');
   }

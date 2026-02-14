@@ -1,7 +1,6 @@
 // worker_listen.js
 import "./bootstrap.js";
 import { spawn } from "node:child_process";
-import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -97,10 +96,15 @@ function runCommand(command, args, timeoutMs) {
   });
 }
 
-async function tryReadJson(filepath) {
+function parseEmittedJson(stdout, marker) {
+  // Marker format: "__UNIFIED_JSON__=<json>" or "__PLANIT_JSON__=<json>"
+  const re = new RegExp(`^${marker}=(.+)$`, "m");
+  const matches = stdout.match(new RegExp(`^${marker}=(.+)$`, "gm"));
+  if (!matches || matches.length === 0) return null;
+  const last = matches[matches.length - 1];
+  const jsonPart = last.slice(marker.length + 1);
   try {
-    const raw = await fs.readFile(filepath, "utf8");
-    return JSON.parse(raw);
+    return JSON.parse(jsonPart);
   } catch {
     return null;
   }
@@ -177,6 +181,7 @@ async function executeScrape(job, cfg) {
     mapper.resolved,
     "--ons-code",
     job.ons_code,
+    "--emit-json",
   ];
 
   const startedAt = new Date().toISOString();
@@ -193,14 +198,8 @@ async function executeScrape(job, cfg) {
     );
   }
 
-  const unifiedMatch = proc.stdout.match(/Unified JSON:\s+([^\s]+_UNIFIED\.json)/);
-  const planitMatch = proc.stdout.match(/PlanIt-mapped JSON:\s+([^\s]+_PLANIT\.json)/);
-
-  const unifiedFile = unifiedMatch ? path.resolve(process.cwd(), unifiedMatch[1]) : null;
-  const planitFile = planitMatch ? path.resolve(process.cwd(), planitMatch[1]) : null;
-
-  const unified = unifiedFile ? await tryReadJson(unifiedFile) : null;
-  const planit = planitFile ? await tryReadJson(planitFile) : null;
+  const unified = parseEmittedJson(proc.stdout, "__UNIFIED_JSON__");
+  const planit = parseEmittedJson(proc.stdout, "__PLANIT_JSON__");
 
   return {
     started_at: startedAt,
@@ -210,8 +209,8 @@ async function executeScrape(job, cfg) {
     site_url: cfg.site_url,
     scraper_cmd: `${process.execPath} ${args.join(" ")}`,
     artifacts: {
-      unified_file: unifiedFile,
-      planit_file: planitFile,
+      unified_file: null,
+      planit_file: null,
     },
     unified,
     planit,

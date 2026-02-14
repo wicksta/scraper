@@ -12,6 +12,8 @@ const argv = yargs(hideBin(process.argv))
   .option('area-name', { type: 'string', describe: 'LPA name', demandOption: false })
   .option('ons-code', { type: 'string', describe: 'ONS code', demandOption: false })
   .option('headed', { type: 'boolean', describe: 'Run with browser visible', default: false })
+  .option('artifacts', { type: 'boolean', describe: 'Write HTML/PNG/JSON artifacts to disk', default: false })
+  .option('emit-json', { type: 'boolean', describe: 'Emit UNIFIED/PLANIT JSON to stdout (worker-friendly)', default: true })
   .strict()
   .help()
   .argv;
@@ -258,8 +260,10 @@ function requireMapper(mapperPath) {
   const refInput = page.locator(refSelector);
 
   if (!(await refInput.count())) {
-    await page.screenshot({ path: `${base}_NO_REF_INPUT.png`, fullPage: true });
-    fs.writeFileSync(`${base}_NO_REF_INPUT.html`, await page.content(), 'utf8');
+    if (hasFlag('--artifacts')) {
+      await page.screenshot({ path: `${base}_NO_REF_INPUT.png`, fullPage: true });
+      fs.writeFileSync(`${base}_NO_REF_INPUT.html`, await page.content(), 'utf8');
+    }
     throw new Error(`Could not find reference input: ${refSelector}`);
   }
 
@@ -320,14 +324,23 @@ function requireMapper(mapperPath) {
 
     unified.tabs[tabName] = { title, url: finalUrl, extracted };
 
-    const tag = safeFilename(`${base}_${tabName}`);
-    fs.writeFileSync(`${tag}.html`, await page.content(), 'utf8');
-    await page.screenshot({ path: `${tag}.png`, fullPage: true });
-    console.log(`Saved artefacts: ${tag}.html / ${tag}.png`);
+    if (hasFlag('--artifacts')) {
+      const tag = safeFilename(`${base}_${tabName}`);
+      fs.writeFileSync(`${tag}.html`, await page.content(), 'utf8');
+      await page.screenshot({ path: `${tag}.png`, fullPage: true });
+      console.log(`Saved artefacts: ${tag}.html / ${tag}.png`);
+    }
   }
 
-  fs.writeFileSync(`${base}_UNIFIED.json`, JSON.stringify(unified, null, 2), 'utf8');
-  console.log(`\n✅ Unified JSON: ${base}_UNIFIED.json`);
+  if (hasFlag('--artifacts')) {
+    fs.writeFileSync(`${base}_UNIFIED.json`, JSON.stringify(unified, null, 2), 'utf8');
+    console.log(`\n✅ Unified JSON: ${base}_UNIFIED.json`);
+  }
+
+  if (!process.argv.includes('--no-emit-json')) {
+    // Single-line JSON marker for worker parsing.
+    console.log(`__UNIFIED_JSON__=${JSON.stringify(unified)}`);
+  }
 
   // ---- Mapping step -----------------------------------------------------
 
@@ -350,8 +363,14 @@ function requireMapper(mapperPath) {
     planit.source_url = planit.source_url || unified.tabs.summary?.url || unified.start_url;
     planit.url = planit.url || planit.source_url;
 
-    fs.writeFileSync(`${base}_PLANIT.json`, JSON.stringify(mapped, null, 2), 'utf8');
-    console.log(`✅ PlanIt-mapped JSON: ${base}_PLANIT.json`);
+    if (hasFlag('--artifacts')) {
+      fs.writeFileSync(`${base}_PLANIT.json`, JSON.stringify(mapped, null, 2), 'utf8');
+      console.log(`✅ PlanIt-mapped JSON: ${base}_PLANIT.json`);
+    }
+
+    if (!process.argv.includes('--no-emit-json')) {
+      console.log(`__PLANIT_JSON__=${JSON.stringify(mapped)}`);
+    }
   } else {
     console.log('ℹ️ No mapper provided (--mapper). Skipping PlanIt mapping step.');
   }
