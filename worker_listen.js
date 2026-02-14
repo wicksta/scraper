@@ -14,8 +14,6 @@ const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 15 * 60 * 10
 const PROJECT_ROOT = process.cwd();
 const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
   "scraper.cjs",
-  "scraper_camden_northgate.cjs",
-  "scraper_camden_accountforms.cjs",
   "scraper_camden_socrata.cjs",
 ]);
 

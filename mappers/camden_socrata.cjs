@@ -11,6 +11,7 @@ module.exports = {
   async mapToPlanit(unified, ctx) {
     const warnings = [];
     const unmapped = {};
+    const { extractUkPostcode, resolvePostcodeViaOnspd } = require("../library.cjs");
 
     const summary = unified.tabs?.summary?.extracted || {};
     const details = unified.tabs?.further_information?.extracted || {};
@@ -60,7 +61,7 @@ module.exports = {
       name: ref || null,
 
       address: address || null,
-      postcode: null,
+      postcode: extractUkPostcode(address) || null,
       ward_name: wardName || null,
 
       area_id: null,
@@ -116,6 +117,32 @@ module.exports = {
       cannot_find: 0,
     };
 
+    // Only if we don't already have coords: fill from postcode via ONSPD.
+    if (planit.lat == null && planit.lng == null && planit.postcode) {
+      const geo = await resolvePostcodeViaOnspd(planit.postcode);
+      if (geo.success) {
+        planit.lat = geo.lat;
+        planit.lng = geo.long;
+      }
+    }
+
+    // Populate location_x/location_y from lat/lng (preferred for PlanIt consumers).
+    // Assumption: location_x = lat, location_y = lng.
+    if (planit.location_x == null && planit.location_y == null) {
+      if (planit.lat != null && planit.lng != null) {
+        planit.location_x = planit.lat;
+        planit.location_y = planit.lng;
+      }
+    }
+
+    if (planit.n_statutory_days == null && planit.date_validated && planit.target_decision_date) {
+      const start = new Date(`${planit.date_validated}T00:00:00Z`);
+      const end = new Date(`${planit.target_decision_date}T00:00:00Z`);
+      if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+        planit.n_statutory_days = Math.round((end - start) / 86400000);
+      }
+    }
+
     // Non-PlanIt extras (kept for debugging/upstream enrichment)
     planit.decision_level = decisionLevel || null;
 
@@ -135,4 +162,3 @@ module.exports = {
     return { planit, warnings, unmapped };
   },
 };
-

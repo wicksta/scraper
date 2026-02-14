@@ -29,8 +29,27 @@ const argv = yargs(hideBin(process.argv))
   .argv;
 
 const q = argv.ref;
-const baseUrl = (argv['start-url'] || 'https://opendata.camden.gov.uk').replace(/\/$/, '');
-const datasetId = argv.dataset;
+
+function parseSocrataBaseAndDataset(startUrl, datasetArg) {
+  const fallbackBase = 'https://opendata.camden.gov.uk';
+  const raw = String(startUrl || fallbackBase).trim();
+
+  try {
+    const u = new URL(raw);
+    const m = u.pathname.match(/^\/resource\/([a-z0-9]{4}-[a-z0-9]{4})\.json$/i);
+    if (m) {
+      // If caller passes full resource URL, extract origin + dataset id.
+      return { baseUrl: u.origin, datasetId: datasetArg || m[1] };
+    }
+    // Otherwise treat as base host.
+    return { baseUrl: u.origin, datasetId: datasetArg || '2eiu-s2cw' };
+  } catch {
+    // Non-URL input; treat as base host string.
+    return { baseUrl: raw.replace(/\/$/, ''), datasetId: datasetArg || '2eiu-s2cw' };
+  }
+}
+
+const { baseUrl, datasetId } = parseSocrataBaseAndDataset(argv['start-url'], argv.dataset);
 const mapperPath = argv.mapper;
 const areaName = argv['area-name'] || null;
 const onsCode = argv['ons-code'] || null;
