@@ -124,6 +124,8 @@ Columns:
 - `source text not null default 'ngist'`
 - `requested_by text`
 - `job_type text not null`
+- `ons_code text`
+- `application_ref text`
 - `params jsonb not null`
 - `mapper text`
 - `status text not null default 'queued'`
@@ -143,6 +145,24 @@ Constraints:
 Indexes:
 - `scrape_jobs_created_at_idx` (btree on `created_at`)
 - `scrape_jobs_status_idx` (btree on `status`)
+- `scrape_jobs_ons_code_idx` (btree on `ons_code`)
+- `scrape_jobs_status_created_idx` (btree on `status`, `created_at`)
+
+### `lpa_scrape_configs`
+Purpose: per-LPA scraper configuration resolved by worker at runtime.
+
+Columns:
+- `ons_code text not null` (PK)
+- `site_url text not null`
+- `scraper_entrypoint text not null` (repo-relative path, e.g. `scraper.cjs`)
+- `mapper_path text not null` (repo-relative path under `mappers/`, `.cjs`)
+- `enabled boolean not null default true`
+- `notes text`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes:
+- `lpa_scrape_configs_enabled_idx` (btree on `enabled`)
 
 ### `extract_jobs`
 Purpose: extraction/OCR pipeline job tracking.
@@ -174,6 +194,13 @@ Objects present in `public`:
 
 ## Worker/Queue Notes
 - `worker_listen.js` subscribes to PostgreSQL `LISTEN` channel `scrape_job_created`.
+- Notify payload includes: `job_id`, `job_type`, `status`, `ons_code`, `application_ref`.
+- Worker claims jobs atomically with `FOR UPDATE SKIP LOCKED`.
+- Worker only claims queued jobs where `ons_code` and `application_ref` are both present.
+- Worker resolves `site_url`/`scraper_entrypoint`/`mapper_path` from `lpa_scrape_configs`.
+- Worker rejects absolute paths, parent traversal, and out-of-repo paths.
+- Worker currently allowlists scraper entrypoint to `scraper.cjs`.
+- Worker currently requires mapper paths to be `mappers/*.cjs`.
 - Import `./bootstrap.js` first in scripts that require `.env` variables.
 - If connection drops, listener reconnect logic is required because `LISTEN` state is per-connection.
 
@@ -182,3 +209,4 @@ Objects present in `public`:
 - Preserve idempotency semantics around `scrape_jobs.idempotency_key`.
 - For vector search changes, keep `vector(1536)` dimension unchanged unless a coordinated embedding migration is planned.
 - Avoid schema mutations without explicit migration scripts and rollback notes.
+- Remind user to update the AGENTS.md if and whenever the database schema is changed.
