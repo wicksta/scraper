@@ -1,0 +1,166 @@
+{
+  "query": "25/04808/ADFULL",
+  "keyVal": "SZDRRARPFU500",
+  "fetched_at": "2026-02-10T00:25:19.182Z",
+  "tabs": {
+    "summary": {
+      "title": "25/04808/ADFULL | Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL) | New Zealand House 80 Haymarket London SW1Y 4TE",
+      "url": "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=summary&keyVal=SZDRRARPFU500",
+      "extracted": {
+        "headline": {
+          "reference": "25/04808/ADFULL",
+          "address": "New Zealand House 80 Haymarket London SW1Y 4TE",
+          "decision_badge": "Application Permitted",
+          "description": "Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL)"
+        },
+        "tables": {
+          "simpleDetailsTable": {
+            "reference": "25/04808/ADFULL",
+            "alternative_reference": "PP-14157910",
+            "application_received": "Mon 14 Jul 2025",
+            "application_validated": "Mon 14 Jul 2025",
+            "address": "New Zealand House 80 Haymarket London SW1Y 4TE",
+            "proposal": "Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL)",
+            "status": "Decided",
+            "decision": "Application Permitted",
+            "decision_issued_date": "Thu 24 Jul 2025",
+            "appeal_status": "Not Available",
+            "appeal_decision": "Not Available"
+          }
+        },
+        "dl": {},
+        "raw": {
+          "stepper": {
+            "step-received": {
+              "status": "Received",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-validated": {
+              "status": "Validated",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-consultation": {
+              "status": "Consultation",
+              "date": ""
+            },
+            "step-recommendation": {
+              "status": "Recommendation and/or Committee",
+              "date": ""
+            },
+            "step-decision": {
+              "status": "Decided",
+              "date": "Thu 24 Jul 2025"
+            }
+          }
+        }
+      }
+    },
+    "further_information": {
+      "title": "25/04808/ADFULL | Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL) | New Zealand House 80 Haymarket London SW1Y 4TE",
+      "url": "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=details&keyVal=SZDRRARPFU500",
+      "extracted": {
+        "headline": {
+          "reference": "25/04808/ADFULL",
+          "address": "New Zealand House 80 Haymarket London SW1Y 4TE",
+          "decision_badge": "Application Permitted",
+          "description": "Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL)"
+        },
+        "tables": {
+          "applicationDetails": {
+            "application_type": "Approval of Details (Full PP)",
+            "decision": "Application Permitted",
+            "actual_decision_level": "Delegated Decision",
+            "expected_decision_level": "Not Available",
+            "case_officer": "Nikki Mitchell",
+            "amenity_society": "WESTMINSTER SOCIETY",
+            "ward": "St James's",
+            "district_reference": "Not Available",
+            "applicant_name": "C/O Agent",
+            "agent_name": "Mr Aadam Siddiqui",
+            "agent_company_name": "Newmark",
+            "agent_address": "One Fitzroy 6 Mortimer Street London W1T 3JJ",
+            "environmental_assessment_requested": "No"
+          }
+        },
+        "dl": {},
+        "raw": {
+          "stepper": {
+            "step-received": {
+              "status": "Received",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-validated": {
+              "status": "Validated",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-consultation": {
+              "status": "Consultation",
+              "date": ""
+            },
+            "step-recommendation": {
+              "status": "Recommendation and/or Committee",
+              "date": ""
+            },
+            "step-decision": {
+              "status": "Decided",
+              "date": "Thu 24 Jul 2025"
+            }
+          }
+        }
+      }
+    },
+    "important_dates": {
+      "title": "25/04808/ADFULL | Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL) | New Zealand House 80 Haymarket London SW1Y 4TE",
+      "url": "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=dates&keyVal=SZDRRARPFU500",
+      "extracted": {
+        "headline": {
+          "reference": "25/04808/ADFULL",
+          "address": "New Zealand House 80 Haymarket London SW1Y 4TE",
+          "decision_badge": "Application Permitted",
+          "description": "Details of further information about the new and altered shopfronts (detailed drawings at 1:20 of new shopfronts, and 1:10 of altered and specifications), drawings relating to alterations to existing shopfronts must define between new and retained fabric new decorative finishes to the arcade (detailed plans, elevations and sections at 1:20) (in consultation with Historic England), new stone balustrade (detailed elevations and sections at 1:10) and new gates (detailed drawings at 1:10 and specification) pursuant to condition 33 (A), (B), (C), (G) of planning permission dated 8th April 2024 (RN:23/00571/FULL)"
+        },
+        "tables": {
+          "simpleDetailsTable": {
+            "application_received_date": "Mon 14 Jul 2025",
+            "application_validated_date": "Mon 14 Jul 2025",
+            "actual_committee_date": "Not Available",
+            "last_advertised_in_press_date": "Not Available",
+            "latest_advertisement_expiry_date": "Not Available",
+            "last_site_notice_posted_date": "Not Available",
+            "latest_site_notice_expiry_date": "Not Available",
+            "agreed_expiry_date": "Not Available",
+            "decision_made_date": "Thu 24 Jul 2025",
+            "decision_issued_date": "Thu 24 Jul 2025",
+            "target_date": "Mon 08 Sep 2025",
+            "temporary_permission_expiry_date": "Not Available"
+          }
+        },
+        "dl": {},
+        "raw": {
+          "stepper": {
+            "step-received": {
+              "status": "Received",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-validated": {
+              "status": "Validated",
+              "date": "Mon 14 Jul 2025"
+            },
+            "step-consultation": {
+              "status": "Consultation",
+              "date": ""
+            },
+            "step-recommendation": {
+              "status": "Recommendation and/or Committee",
+              "date": ""
+            },
+            "step-decision": {
+              "status": "Decided",
+              "date": "Thu 24 Jul 2025"
+            }
+          }
+        }
+      }
+    }
+  }
+}

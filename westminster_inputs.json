@@ -1,0 +1,83 @@
+[
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "edit-funnelback-search-field",
+    "name": "funnelback_search_field",
+    "placeholder": "Search",
+    "ariaLabel": null,
+    "label": "Search"
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "form_build_id",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "form_id",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "_csrf",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "searchType",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  },
+  {
+    "tag": "select",
+    "type": "",
+    "id": "searchTypeStatus",
+    "name": "searchCriteria.caseStatus",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": "Status:"
+  },
+  {
+    "tag": "input",
+    "type": "text",
+    "id": "simpleSearchString",
+    "name": "searchCriteria.simpleSearchString",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": "Enter a keyword, reference number, postcode or single line of an address."
+  },
+  {
+    "tag": "input",
+    "type": "hidden",
+    "id": null,
+    "name": "searchCriteria.simpleSearch",
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  },
+  {
+    "tag": "input",
+    "type": "submit",
+    "id": null,
+    "name": null,
+    "placeholder": null,
+    "ariaLabel": null,
+    "label": null
+  }
+]
