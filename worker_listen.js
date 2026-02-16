@@ -10,6 +10,8 @@ const { Client } = pg;
 const CHANNEL = "scrape_job_created";
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}:${process.pid}`;
 const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 15 * 60 * 1000);
+const WORKER_JOB_DELAY_MS = Number(process.env.WORKER_JOB_DELAY_MS || 0);
+const WORKER_JOB_JITTER_MS = Number(process.env.WORKER_JOB_JITTER_MS || 0);
 const PROJECT_ROOT = process.cwd();
 const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
   "scraper.cjs",
@@ -19,6 +21,18 @@ const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
 let client;
 let draining = false;
 let drainRequested = false;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function politeDelay() {
+  const base = Number.isFinite(WORKER_JOB_DELAY_MS) ? WORKER_JOB_DELAY_MS : 0;
+  const jitter = Number.isFinite(WORKER_JOB_JITTER_MS) ? WORKER_JOB_JITTER_MS : 0;
+  const extra = jitter > 0 ? Math.floor(Math.random() * (jitter + 1)) : 0;
+  const ms = Math.max(0, base + extra);
+  if (ms > 0) await sleep(ms);
+}
 
 function tail(value, maxLen = 4000) {
   if (!value) return "";
@@ -285,6 +299,9 @@ async function drainQueue() {
     } catch (err) {
       await markFailure(job, err);
       console.error(`[worker] failed job id=${job.id}:`, err);
+    } finally {
+      // Politeness throttle: avoid hammering the upstream site when the queue is deep.
+      await politeDelay();
     }
   }
 }

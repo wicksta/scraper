@@ -186,6 +186,56 @@ Columns:
 Constraints:
 - `extract_jobs_pkey` primary key (`id`)
 
+### `applications`
+Purpose: long-term canonical storage for scraped planning applications (separate from `scrape_jobs`), with a compatibility view for legacy MySQL consumers.
+
+Columns (selected):
+- `id bigserial` (PK)
+- `ons_code text not null`
+- `reference text not null`
+- many legacy-aligned fields (dates, status/decision, parties, etc.)
+- `unified_json jsonb`, `planit_json jsonb` (raw payload retention)
+- `source_url text`, `keyval text`
+- `date_added date not null default current_date`
+- `first_seen_at timestamptz not null default now()`
+- `scraped_at timestamptz not null default now()`
+
+Indexes:
+- Unique `(ons_code, reference)`
+
+Related objects:
+- `applications_legacy` (VIEW): exposes legacy column names with spaces/case for merge/export compatibility.
+
+### `application_backfill_state`
+Purpose: per-ONS cursor for week-by-week backfill discovery.
+
+Columns:
+- `ons_code text` (PK)
+- `mode text` (`backfill` | `steady_state`)
+- `cursor_end date`
+- `cutoff_date date`
+- `updated_at timestamptz`
+
+### `application_discovery_runs`
+Purpose: audit log for validated-range discovery windows and outcomes.
+
+Columns:
+- `id bigserial` (PK)
+- `ons_code text`
+- `window_start date`, `window_end date`
+- `status text`, `n_refs integer`, `error text`
+- `created_at`, `updated_at` (timestamptz)
+
+### `application_ingest_log`
+Purpose: idempotency + error log for materializing `scrape_jobs` into `applications`.
+
+Columns:
+- `scrape_job_id bigint` (PK)
+- `ons_code text`
+- `application_ref text`
+- `ingested_at timestamptz`
+- `error text`
+
 ### PostGIS metadata/view objects
 Objects present in `public`:
 - `geometry_columns` (view)

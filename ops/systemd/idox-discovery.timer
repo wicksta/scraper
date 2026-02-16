@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Idox validated-range discovery hourly (oneshot)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

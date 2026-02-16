@@ -1,8 +1,9 @@
-const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
+
+const { chromium } = require('playwright');
 
 const argv = yargs(hideBin(process.argv))
   .scriptName('idox-scrape')

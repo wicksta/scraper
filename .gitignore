@@ -23,6 +23,7 @@ Thumbs.db
 coverage/
 test-results/
 playwright-report/
+.pw-browsers/
 
 # Build/cache artifacts
 dist/

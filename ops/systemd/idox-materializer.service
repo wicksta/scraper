@@ -1,0 +1,15 @@
+[Unit]
+Description=Materialize completed scrape_jobs into applications table
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/scraper
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/scraper/application_materialize.js --loop --sleep-ms 30000 --limit 50
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

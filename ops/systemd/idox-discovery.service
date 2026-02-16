@@ -1,0 +1,15 @@
+[Unit]
+Description=Idox validated-range discovery (oneshot; advances backfill cursor by one window)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/scraper
+Environment=NODE_ENV=production
+# Set ONS_CODE in the environment or replace it inline. Example Westminster: E09000033
+# Optionally set this via an EnvironmentFile, e.g. /etc/default/idox-discovery
+EnvironmentFile=-/etc/default/idox-discovery
+ExecStart=/usr/bin/node /opt/scraper/application_discover_idox_validated.js --ons-code ${ONS_CODE} --cutoff-date 2018-01-01
+
+[Install]
+WantedBy=multi-user.target
