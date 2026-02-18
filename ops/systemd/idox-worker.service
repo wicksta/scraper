@@ -10,7 +10,7 @@ EnvironmentFile=-/etc/default/idox-worker
 # Recommended: run as a non-root user that has Playwright browsers installed (or can install them).
 #User=james
 #Group=james
-ExecStart=/usr/bin/node /opt/scraper/worker_listen.js
+ExecStart=/usr/bin/node /opt/scraper/worker_listen_new.js
 Restart=always
 RestartSec=2
 
