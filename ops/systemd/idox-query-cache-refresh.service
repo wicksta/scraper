@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh query_cache from queries/cache_*.sql (excludes import_time.sql)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/scraper
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/default/idox-query-cache-refresh
+ExecStart=/usr/bin/node /opt/scraper/scripts/refresh_query_cache.js

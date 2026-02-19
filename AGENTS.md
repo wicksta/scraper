@@ -196,12 +196,15 @@ Columns (selected):
 - many legacy-aligned fields (dates, status/decision, parties, etc.)
 - `unified_json jsonb`, `planit_json jsonb` (raw payload retention)
 - `source_url text`, `keyval text`
+- `wfs_geometry jsonb` (raw WFS geometry payload, e.g. `wkt` + `bbox`)
+- `wfs_geom geometry(Geometry,27700)` (native PostGIS geometry for spatial queries)
 - `date_added date not null default current_date`
 - `first_seen_at timestamptz not null default now()`
 - `scraped_at timestamptz not null default now()`
 
 Indexes:
 - Unique `(ons_code, reference)`
+- `applications_wfs_geom_gix` (GIST on `wfs_geom`)
 
 Related objects:
 - `applications_legacy` (VIEW): exposes legacy column names with spaces/case for merge/export compatibility.

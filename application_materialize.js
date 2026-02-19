@@ -156,7 +156,7 @@ async function ingestOne(client, job) {
   const proposal = pick(planit?.description);
 
   const status = pick(planit?.status, planit?.app_state);
-  const decision = pick(planit?.decision);
+  const decision = pick(planit?.decision, planit?.status);
 
   const appealStatus = pick(planit?.appeal_status);
   const appealDecision = pick(planit?.appeal_decision);

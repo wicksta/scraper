@@ -9,6 +9,8 @@
     "discover:validated": "node application_discover_idox_validated.js",
     "materialize": "node application_materialize.js",
     "sync:mysql:pg": "node application_sync_mysql_to_pg.js",
+    "backfill:wfs-geometry": "node application_backfill_wfs_geometry.js",
+    "cache:refresh": "node scripts/refresh_query_cache.js",
     "db:pg": "node scripts/open_pg_cli.js",
     "db:mysql": "node scripts/open_mysql_cli.js"
   },

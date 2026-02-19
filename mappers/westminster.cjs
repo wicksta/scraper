@@ -58,8 +58,8 @@ module.exports = {
 
     // Status/state
     // PlanIt schema has both app_state and status; you can keep both if useful.
-    const status = ctx.pickFirst(sTable.status, summary.headline?.decision_badge);
-    const appState = ctx.pickFirst(sTable.status, sTable.decision); // your call
+    const status = ctx.pickFirst(summary.headline?.decision_badge,sTable.decision);
+    const appState = ctx.pickFirst(sTable.status); // your call
 
     // Application type
     const applicationType = ctx.pickFirst(dTable.application_type, null);

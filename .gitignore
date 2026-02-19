@@ -35,3 +35,7 @@ tmp/
 # Scrape/debug artifacts requested
 *.html
 *.png
+
+#ngist muount
+ngist/
+ngist

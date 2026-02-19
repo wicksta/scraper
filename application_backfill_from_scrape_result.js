@@ -20,6 +20,11 @@ const argv = yargs(hideBin(process.argv))
   .option("limit", { type: "number", default: 200, describe: "Batch size for scanning applications." })
   .option("max-rows", { type: "number", default: 0, describe: "Stop after scanning this many rows (0 = no cap)." })
   .option("ons-code", { type: "string", default: "", describe: "Only process applications for this ONS code." })
+  .option("heartbeat-seconds", {
+    type: "number",
+    default: 15,
+    describe: "Emit progress heartbeat every N seconds (0 = disabled).",
+  })
   .option("apply", { type: "boolean", default: false, describe: "Write updates to DB. Default is dry-run." })
   .strict()
   .help()
@@ -216,6 +221,7 @@ async function main() {
 
   const nullableColumns = await getApplicationColumns(client);
   const colByName = new Map(nullableColumns.map((c) => [c.column_name, c]));
+  const startMs = Date.now();
 
   let lastId = 0;
   let scanned = 0;
@@ -223,8 +229,27 @@ async function main() {
   let withResult = 0;
   let updatedApps = 0;
   let updatedFields = 0;
+  let heartbeat = null;
 
   try {
+    const heartbeatSeconds = Number(argv["heartbeat-seconds"] || 0);
+    console.error(
+      `[application-backfill-from-scrape-result] starting mode=${argv.apply ? "apply" : "dry-run"} ` +
+        `limit=${Number(argv.limit || 200)} ons_code=${String(argv["ons-code"] || "").trim() || "ALL"} ` +
+        `heartbeat=${heartbeatSeconds > 0 ? `${heartbeatSeconds}s` : "off"}`,
+    );
+    if (heartbeatSeconds > 0) {
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startMs) / 1000));
+        const rowsPerSec = (scanned / elapsedSec).toFixed(1);
+        console.error(
+          `[application-backfill-from-scrape-result] heartbeat scanned=${scanned} ` +
+            `with_match=${withMatch} with_result=${withResult} apps_with_updates=${updatedApps} ` +
+            `fields_updated=${updatedFields} rps=${rowsPerSec}`,
+        );
+      }, heartbeatSeconds * 1000);
+    }
+
     while (true) {
       const batch = await fetchBatch(client, {
         lastId,
@@ -271,6 +296,7 @@ async function main() {
       if (argv["max-rows"] > 0 && scanned >= Number(argv["max-rows"])) break;
     }
   } finally {
+    if (heartbeat) clearInterval(heartbeat);
     await client.end();
   }
 
