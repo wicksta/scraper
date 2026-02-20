@@ -104,8 +104,54 @@ function buildJsonKeyIndex(root) {
 function toDateOnly(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
-  const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+
+  // ISO-ish fast path (YYYY-MM-DD or timestamp prefix)
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) return isoMatch[1];
+
+  // Strip optional label prefix, e.g. "Committee: Tue 30 Sep 2025"
+  const stripped = raw.includes(":") ? raw.split(":").slice(1).join(":").trim() : raw;
+
+  const mmByMon = {
+    jan: "01",
+    feb: "02",
+    mar: "03",
+    apr: "04",
+    may: "05",
+    jun: "06",
+    jul: "07",
+    aug: "08",
+    sep: "09",
+    oct: "10",
+    nov: "11",
+    dec: "12",
+  };
+
+  // Idox-style day-prefixed date, e.g. "Tue 30 Sep 2025"
+  const dayPrefixed = stripped.match(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (dayPrefixed) {
+    const day = Number(dayPrefixed[1]);
+    const mon = dayPrefixed[2].toLowerCase();
+    const year = Number(dayPrefixed[3]);
+    const mm = mmByMon[mon];
+    if (Number.isInteger(day) && day >= 1 && day <= 31 && Number.isInteger(year) && mm) {
+      return `${year}-${mm}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  // Also accept "30 Sep 2025" without weekday.
+  const shortDate = stripped.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (shortDate) {
+    const day = Number(shortDate[1]);
+    const mon = shortDate[2].toLowerCase();
+    const year = Number(shortDate[3]);
+    const mm = mmByMon[mon];
+    if (Number.isInteger(day) && day >= 1 && day <= 31 && Number.isInteger(year) && mm) {
+      return `${year}-${mm}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  return null;
 }
 
 function coerceValue(value, col) {

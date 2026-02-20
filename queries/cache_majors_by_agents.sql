@@ -21,11 +21,13 @@ tagged AS (
     CASE
       WHEN txt ~* '\m(dp9 limited|dp9)\M' THEN 'DP9'
       WHEN txt ~* '\m(turley associates|turley)\M' THEN 'Turley'
-      WHEN txt ~* '\m(newmark gerald eve llp|gerald eve llp|gerald eve|newmark)\M' THEN 'Gerald Eve'
+      WHEN txt ~* '\m(newmark gerald eve llp|gerald eve llp|gerald eve|newmark)\M' THEN 'Newmark (inc Gerald Eve)'
       WHEN txt ~* '\m(savills)\M' THEN 'Savills'
       WHEN txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
-      WHEN txt ~* '\m(cbre)\M' THEN 'CBRE'
+      WHEN txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
+      WHEN txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent
   FROM app_text
@@ -41,11 +43,23 @@ base AS (
     AND major = 'Major'
   GROUP BY canonical_agent, EXTRACT(YEAR FROM application_validated)
 ),
+majors_all_year AS (
+  SELECT
+    EXTRACT(YEAR FROM application_validated)::int AS yr,
+    COUNT(DISTINCT (ons_code, reference)) AS cnt
+  FROM tagged
+  WHERE application_validated IS NOT NULL
+    AND major = 'Major'
+  GROUP BY EXTRACT(YEAR FROM application_validated)
+),
 bounds AS (
   SELECT
     2005 AS min_year,
-    GREATEST(2005, COALESCE(MAX(yr), 2005)) AS max_year
-  FROM base
+    GREATEST(
+      2005,
+      COALESCE((SELECT MAX(yr) FROM base), 2005),
+      COALESCE((SELECT MAX(yr) FROM majors_all_year), 2005)
+    ) AS max_year
 ),
 years AS (
   SELECT generate_series((SELECT min_year FROM bounds),
@@ -74,8 +88,6 @@ rows_by_agent AS (
       jsonb_build_object('agent', agent)
       ||
       jsonb_object_agg(('y' || yr)::text, to_jsonb(cnt) ORDER BY yr)
-      ||
-      jsonb_build_object('total', SUM(cnt))
     ) AS row_obj
   FROM grid
   GROUP BY agent
@@ -88,20 +100,15 @@ total_row_collapsed AS (
       jsonb_build_object('agent', 'TOTAL (All majors)')
       ||
       jsonb_object_agg(key, val ORDER BY key)
-      ||
-      jsonb_build_object('total', total_sum)
     ) AS row_obj
   FROM (
     SELECT
-      ('y' || yr)::text AS key,
-      to_jsonb(SUM(cnt)) AS val
-    FROM grid
-    GROUP BY yr
+      ('y' || y.yr)::text AS key,
+      to_jsonb(COALESCE(m.cnt, 0)) AS val
+    FROM years y
+    LEFT JOIN majors_all_year m
+      ON m.yr = y.yr
   ) y
-  CROSS JOIN (
-    SELECT SUM(cnt) AS total_sum FROM grid
-  ) t
-  GROUP BY total_sum
 ),
 all_rows AS (
   SELECT agent, is_total, row_obj FROM rows_by_agent
@@ -110,7 +117,13 @@ all_rows AS (
 ),
 payload AS (
   SELECT COALESCE(
-    jsonb_agg(row_obj ORDER BY is_total DESC, (row_obj->>'total')::int DESC, agent),
+    jsonb_agg(
+      row_obj
+      ORDER BY
+        is_total ASC,
+        CASE WHEN agent = 'Newmark (inc Gerald Eve)' THEN 0 ELSE 1 END,
+        agent
+    ),
     '[]'::jsonb
   ) AS j
   FROM all_rows
