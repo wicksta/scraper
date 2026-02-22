@@ -260,6 +260,8 @@ Objects present in `public`:
 ## Operational Guidance For Agents
 - Treat `documents` as parent entity for `chunks` and `llm_outputs`.
 - Preserve idempotency semantics around `scrape_jobs.idempotency_key`.
+- For `ngist` MySQL planning records (`planit_applications` / `app_combined_nmrk_planit`): treat `status` as decision/outcome text and `app_state` as workflow/state text.
+- For direct DB checks/queries (Postgres/MySQL), proceed when needed; if sandbox networking blocks access, rerun outside sandbox via escalation and request user consent.
 - For vector search changes, keep `vector(1536)` dimension unchanged unless a coordinated embedding migration is planned.
 - Avoid schema mutations without explicit migration scripts and rollback notes.
 - Remind user to update the AGENTS.md if and whenever the database schema is changed.

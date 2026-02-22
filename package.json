@@ -11,6 +11,9 @@
     "sync:mysql:pg": "node application_sync_mysql_to_pg.js",
     "backfill:wfs-geometry": "node application_backfill_wfs_geometry.js",
     "cache:refresh": "node scripts/refresh_query_cache.js",
+    "detect:newmark-jobcodes": "node scripts/detect_newmark_jobcodes.js",
+    "detect:newmark-jobcode:uid": "node scripts/detect_newmark_jobcode_for_uid.js",
+    "detect:newmark-jobcode:tick": "node scripts/detect_newmark_jobcode_tick.js",
     "db:pg": "node scripts/open_pg_cli.js",
     "db:mysql": "node scripts/open_mysql_cli.js"
   },

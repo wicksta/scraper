@@ -43,7 +43,7 @@ module.exports = {
 
     const description = ctx.compactWhitespace(ctx.pickFirst(summary.headline?.description, sTable.proposal));
 
-    const status = ctx.pickFirst(sTable.status, summary.headline?.decision_badge);
+    const status = ctx.pickFirst(sTable.decision, summary.headline?.decision_badge, sTable.status);
     const appState = ctx.pickFirst(sTable.status, sTable.decision);
     const appType = ctx.pickFirst(dTable.application_type, null);
 

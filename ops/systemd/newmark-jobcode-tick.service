@@ -1,0 +1,12 @@
+[Unit]
+Description=Newmark Jobcode Detector (one item tick)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=james
+WorkingDirectory=/opt/scraper
+EnvironmentFile=/opt/scraper/.env
+ExecStart=/usr/bin/env node /opt/scraper/scripts/detect_newmark_jobcode_tick.js --ons-code E09000033 --year 2026 --extract-applicant-with-openai
+Nice=10
