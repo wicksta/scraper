@@ -2,6 +2,7 @@
 import "./bootstrap.js";
 import { spawn } from "node:child_process";
 import fsSync from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import pg from "pg";
@@ -15,15 +16,31 @@ const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}:${process.pid}`;
 const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS || 15 * 60 * 1000);
 const WORKER_JOB_DELAY_MS = Number(process.env.WORKER_JOB_DELAY_MS || 0);
 const WORKER_JOB_JITTER_MS = Number(process.env.WORKER_JOB_JITTER_MS || 0);
+const WORKER_POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS || 60_000);
+const PREFLIGHT_CONNECT_TIMEOUT_MS = Number(process.env.PREFLIGHT_CONNECT_TIMEOUT_MS || 5_000);
+const RECOVERY_STAGE1_SUCCESSES = Number(process.env.RECOVERY_STAGE1_SUCCESSES || 2);
+const RECOVERY_STAGE2_SUCCESSES = Number(process.env.RECOVERY_STAGE2_SUCCESSES || 5);
+const RECOVERY_STAGE3_SUCCESSES = Number(process.env.RECOVERY_STAGE3_SUCCESSES || 10);
+const RECOVERY_STAGE1_DELAY_MS = Number(process.env.RECOVERY_STAGE1_DELAY_MS || 15 * 60 * 1000);
+const RECOVERY_STAGE2_DELAY_MS = Number(process.env.RECOVERY_STAGE2_DELAY_MS || 5 * 60 * 1000);
+const RECOVERY_STAGE3_DELAY_MS = Number(process.env.RECOVERY_STAGE3_DELAY_MS || 60 * 1000);
+const DAILY_PAUSE_ENABLED = !/^(0|false|no)$/i.test(String(process.env.DAILY_PAUSE_ENABLED || "1"));
+const DAILY_PAUSE_INTERVAL_MS = Number(process.env.DAILY_PAUSE_INTERVAL_MS || 24 * 60 * 60 * 1000);
+const DAILY_PAUSE_BASE_MS = Number(process.env.DAILY_PAUSE_BASE_MS || 60 * 60 * 1000);
+const DAILY_PAUSE_JITTER_MS = Number(process.env.DAILY_PAUSE_JITTER_MS || 15 * 60 * 1000);
 const PROJECT_ROOT = process.cwd();
 const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
   "scraper.cjs",
   "scraper_camden_socrata.cjs",
 ]);
+const PREFLIGHT_ERROR_PREFIX = "PREFLIGHT_CONNECTIVITY:";
 
 let client;
 let draining = false;
 let drainRequested = false;
+let recoveryMode = false;
+let recoverySuccessCount = 0;
+let lastDailyPauseAtMs = Date.now();
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -42,6 +59,72 @@ function tail(value, maxLen = 4000) {
   return value.length > maxLen ? value.slice(-maxLen) : value;
 }
 
+function markRecoveryFailure() {
+  recoveryMode = true;
+  recoverySuccessCount = 0;
+}
+
+function markRecoverySuccess() {
+  if (!recoveryMode) return;
+  recoverySuccessCount += 1;
+  if (recoverySuccessCount >= RECOVERY_STAGE3_SUCCESSES) {
+    recoveryMode = false;
+    recoverySuccessCount = 0;
+    console.log("[worker] recovery mode cleared; returning to baseline pacing.");
+  }
+}
+
+function getRecoveryDelayMs() {
+  if (!recoveryMode) return 0;
+  if (recoverySuccessCount < RECOVERY_STAGE1_SUCCESSES) return Math.max(0, RECOVERY_STAGE1_DELAY_MS);
+  if (recoverySuccessCount < RECOVERY_STAGE2_SUCCESSES) return Math.max(0, RECOVERY_STAGE2_DELAY_MS);
+  if (recoverySuccessCount < RECOVERY_STAGE3_SUCCESSES) return Math.max(0, RECOVERY_STAGE3_DELAY_MS);
+  return 0;
+}
+
+function shouldTakeDailyPause(nowMs) {
+  if (!DAILY_PAUSE_ENABLED) return false;
+  const interval = Math.max(60_000, DAILY_PAUSE_INTERVAL_MS);
+  return nowMs - lastDailyPauseAtMs >= interval;
+}
+
+function computeDailyPauseMs() {
+  const base = Math.max(60_000, DAILY_PAUSE_BASE_MS);
+  const jitter = Math.max(0, DAILY_PAUSE_JITTER_MS);
+  const delta = jitter > 0 ? Math.floor(Math.random() * (2 * jitter + 1)) - jitter : 0;
+  return Math.max(60_000, base + delta);
+}
+
+async function maybeTakeDailyPause() {
+  const now = Date.now();
+  if (!shouldTakeDailyPause(now)) return;
+
+  const pauseMs = computeDailyPauseMs();
+  const minutes = Math.round(pauseMs / 60000);
+  console.log(`[worker] scheduled cooldown pause starting now; duration=${minutes}m`);
+  await sleep(pauseMs);
+  lastDailyPauseAtMs = Date.now();
+
+  // After a long pause, re-ramp traffic rather than jumping to normal throughput.
+  recoveryMode = true;
+  recoverySuccessCount = 0;
+  console.log("[worker] cooldown pause ended; entering recovery pacing ramp.");
+}
+
+function computeConnectivityBackoffMs(attempts) {
+  const n = Number(attempts || 0);
+  if (n <= 1) return 60 * 60 * 1000; // 1 hour
+  if (n === 2) return 6 * 60 * 60 * 1000; // 6 hours
+  return 12 * 60 * 60 * 1000; // 12 hours thereafter
+}
+
+function isConnectivityPreflightError(err) {
+  if (!err) return false;
+  if (err.code === "PREFLIGHT_CONNECTIVITY") return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.startsWith(PREFLIGHT_ERROR_PREFIX);
+}
+
 async function claimNextQueuedJob() {
   const sql = `
     WITH candidate AS (
@@ -50,6 +133,17 @@ async function claimNextQueuedJob() {
       WHERE status = 'queued'
         AND ons_code IS NOT NULL
         AND application_ref IS NOT NULL
+        AND (
+          error IS NULL
+          OR error NOT LIKE '${PREFLIGHT_ERROR_PREFIX}%'
+          OR updated_at <= now() - (
+            CASE
+              WHEN attempts <= 1 THEN interval '1 hour'
+              WHEN attempts = 2 THEN interval '6 hours'
+              ELSE interval '12 hours'
+            END
+          )
+        )
       ORDER BY
         (job_type = 'live_scrape_request') DESC,
         created_at ASC,
@@ -68,6 +162,49 @@ async function claimNextQueuedJob() {
   `;
   const { rows } = await client.query(sql, [WORKER_ID]);
   return rows[0] || null;
+}
+
+function tcpConnectProbe(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done({ ok: true }));
+    socket.once("timeout", () => done({ ok: false, reason: "timeout" }));
+    socket.once("error", (err) => done({ ok: false, reason: err?.code || err?.message || "error" }));
+  });
+}
+
+async function runConnectivityPreflight(job, cfg) {
+  let host;
+  try {
+    const u = new URL(cfg.site_url);
+    host = u.hostname;
+  } catch {
+    const err = new Error(`${PREFLIGHT_ERROR_PREFIX} invalid_site_url=${cfg.site_url}`);
+    err.code = "PREFLIGHT_CONNECTIVITY";
+    throw err;
+  }
+
+  const probe = await tcpConnectProbe(host, 443, PREFLIGHT_CONNECT_TIMEOUT_MS);
+  if (probe.ok) {
+    markRecoverySuccess();
+    return;
+  }
+
+  const err = new Error(
+    `${PREFLIGHT_ERROR_PREFIX} host=${host} port=443 reason=${probe.reason} timeout_ms=${PREFLIGHT_CONNECT_TIMEOUT_MS} ons=${job.ons_code} ref=${job.application_ref}`,
+  );
+  err.code = "PREFLIGHT_CONNECTIVITY";
+  throw err;
 }
 
 async function getConfigForOns(onsCode) {
@@ -188,6 +325,8 @@ function resolveMapperPath(rawPath) {
 }
 
 async function executeScrape(job, cfg) {
+  await runConnectivityPreflight(job, cfg);
+
   const scraper = resolveScraperEntrypoint(cfg.scraper_entrypoint);
   const mapper = resolveMapperPath(cfg.mapper_path);
 
@@ -248,6 +387,7 @@ async function markSuccess(job, result) {
           error = NULL,
           logs = $3,
           mapper = $4,
+          updated_at = now(),
           locked_at = NULL,
           locked_by = NULL
       WHERE id = $1
@@ -259,11 +399,15 @@ async function markSuccess(job, result) {
 async function markFailure(job, err) {
   const maxAttempts = Number(job.max_attempts || 1);
   const attempts = Number(job.attempts || 0);
-  const retry = attempts < maxAttempts;
+  const isPreflight = isConnectivityPreflightError(err);
+  const retry = isPreflight || attempts < maxAttempts;
   const nextStatus = retry ? "queued" : "failed";
 
   const errorMsg = err instanceof Error ? err.message : String(err);
-  const logs = tail(errorMsg, 8000);
+  const backoffMs = isPreflight ? computeConnectivityBackoffMs(attempts) : 0;
+  const logs = isPreflight
+    ? tail(`${errorMsg}\nnext_retry_after_ms=${backoffMs}`, 8000)
+    : tail(errorMsg, 8000);
 
   await client.query(
     `
@@ -271,12 +415,21 @@ async function markFailure(job, err) {
       SET status = $2,
           error = $3,
           logs = $4,
+          updated_at = now(),
           locked_at = NULL,
           locked_by = NULL
       WHERE id = $1
     `,
     [job.id, nextStatus, tail(errorMsg, 2000), logs],
   );
+
+  if (isPreflight) {
+    markRecoveryFailure();
+    const delayMinutes = Math.round(backoffMs / 60000);
+    console.warn(
+      `[worker] preflight connectivity failure id=${job.id} attempts=${attempts} next_retry_in=${delayMinutes}m`,
+    );
+  }
 }
 
 async function processOneJob(job) {
@@ -294,6 +447,7 @@ async function processOneJob(job) {
 }
 
 async function drainQueue() {
+  await maybeTakeDailyPause();
   let job = await claimNextQueuedJob();
   if (!job) return;
   while (job) {
@@ -306,8 +460,19 @@ async function drainQueue() {
       console.error(`[worker] failed job id=${job.id}:`, err);
     }
 
+    await maybeTakeDailyPause();
+
     const nextJob = await claimNextQueuedJob();
     if (!nextJob) return;
+
+    const recoveryDelay = getRecoveryDelayMs();
+    if (recoveryDelay > 0) {
+      const delaySeconds = Math.round(recoveryDelay / 1000);
+      console.log(
+        `[worker] recovery pacing delay ${delaySeconds}s before job id=${nextJob.id} successes=${recoverySuccessCount}`,
+      );
+      await sleep(recoveryDelay);
+    }
 
     // Politeness throttle: avoid hammering the upstream site for background jobs.
     if (nextJob.job_type !== "live_scrape_request") {
@@ -369,6 +534,13 @@ async function connectAndListen() {
   scheduleDrain().catch((err) => {
     console.error("[worker] initial drain failed:", err);
   });
+
+  // Periodic polling is needed for backoff-delayed queued jobs.
+  setInterval(() => {
+    scheduleDrain().catch((err) => {
+      console.error("[worker] periodic drain failed:", err);
+    });
+  }, WORKER_POLL_INTERVAL_MS).unref();
 
   client.on("notification", (msg) => {
     if (msg.channel !== CHANNEL) return;
