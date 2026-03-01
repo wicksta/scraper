@@ -135,7 +135,7 @@ async function claimNextQueuedJob() {
         AND application_ref IS NOT NULL
         AND (
           error IS NULL
-          OR error NOT LIKE '${PREFLIGHT_ERROR_PREFIX}%'
+          OR left(error, length($2)) <> $2
           OR updated_at <= now() - (
             CASE
               WHEN attempts <= 1 THEN interval '1 hour'
@@ -143,6 +143,20 @@ async function claimNextQueuedJob() {
               ELSE interval '12 hours'
             END
           )
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM scrape_jobs block
+          WHERE block.ons_code = scrape_jobs.ons_code
+            AND block.error IS NOT NULL
+            AND left(block.error, length($2)) = $2
+            AND block.updated_at > now() - (
+              CASE
+                WHEN block.attempts <= 1 THEN interval '1 hour'
+                WHEN block.attempts = 2 THEN interval '6 hours'
+                ELSE interval '12 hours'
+              END
+            )
         )
       ORDER BY
         (job_type = 'live_scrape_request') DESC,
@@ -160,7 +174,7 @@ async function claimNextQueuedJob() {
     WHERE j.id = candidate.id
     RETURNING j.*;
   `;
-  const { rows } = await client.query(sql, [WORKER_ID]);
+  const { rows } = await client.query(sql, [WORKER_ID, PREFLIGHT_ERROR_PREFIX]);
   return rows[0] || null;
 }
 

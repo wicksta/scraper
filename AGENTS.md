@@ -265,3 +265,6 @@ Objects present in `public`:
 - For vector search changes, keep `vector(1536)` dimension unchanged unless a coordinated embedding migration is planned.
 - Avoid schema mutations without explicit migration scripts and rollback notes.
 - Remind user to update the AGENTS.md if and whenever the database schema is changed.
+
+## Communication Preference
+- User prefers a slightly chattier tone while keeping technical guidance concise and practical.
