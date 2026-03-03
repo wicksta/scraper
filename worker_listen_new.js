@@ -34,6 +34,7 @@ const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
   "scraper_camden_socrata.cjs",
 ]);
 const PREFLIGHT_ERROR_PREFIX = "PREFLIGHT_CONNECTIVITY:";
+const SCRAPER_PROXY_ENV = resolveScraperProxyEnv(process.env);
 
 let client;
 let draining = false;
@@ -197,25 +198,82 @@ function tcpConnectProbe(host, port, timeoutMs) {
   });
 }
 
-async function runConnectivityPreflight(job, cfg) {
-  let host;
+function parseProxyServer(raw) {
+  if (!raw || !String(raw).trim()) return null;
+  const trimmed = String(raw).trim();
   try {
-    const u = new URL(cfg.site_url);
-    host = u.hostname;
+    const withScheme = /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    const u = new URL(withScheme);
+    const port = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+    if (!u.hostname || !Number.isFinite(port) || port <= 0) return null;
+    return { host: u.hostname, port };
   } catch {
-    const err = new Error(`${PREFLIGHT_ERROR_PREFIX} invalid_site_url=${cfg.site_url}`);
-    err.code = "PREFLIGHT_CONNECTIVITY";
-    throw err;
+    return null;
+  }
+}
+
+function resolveScraperProxyEnv(env) {
+  const out = {};
+  const rawUrl = env.SCRAPER_PROXY_URL || "";
+  const rawServer = env.SCRAPER_PROXY_SERVER || "";
+  const rawUser = env.SCRAPER_PROXY_USERNAME || "";
+  const rawPass = env.SCRAPER_PROXY_PASSWORD || "";
+
+  let server = "";
+  let username = "";
+  let password = "";
+
+  if (rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      server = `${u.protocol}//${u.host}`;
+      username = decodeURIComponent(u.username || "");
+      password = decodeURIComponent(u.password || "");
+    } catch {
+      // If parse fails, fallback to SCRAPER_PROXY_SERVER/USERNAME/PASSWORD.
+    }
   }
 
-  const probe = await tcpConnectProbe(host, 443, PREFLIGHT_CONNECT_TIMEOUT_MS);
+  if (!server && rawServer) server = rawServer;
+  if (!username && rawUser) username = rawUser;
+  if (!password && rawPass) password = rawPass;
+
+  if (server) out.SCRAPER_PROXY_SERVER = server;
+  if (username) out.SCRAPER_PROXY_USERNAME = username;
+  if (password) out.SCRAPER_PROXY_PASSWORD = password;
+  return out;
+}
+
+async function runConnectivityPreflight(job, cfg) {
+  let host = "";
+  let port = 443;
+  let targetLabel = "";
+
+  const parsedProxy = parseProxyServer(SCRAPER_PROXY_ENV.SCRAPER_PROXY_SERVER);
+  if (parsedProxy) {
+    host = parsedProxy.host;
+    port = parsedProxy.port;
+    targetLabel = `proxy=${SCRAPER_PROXY_ENV.SCRAPER_PROXY_SERVER}`;
+  } else {
+    try {
+      const u = new URL(cfg.site_url);
+      host = u.hostname;
+      targetLabel = `site=${cfg.site_url}`;
+    } catch {
+      const err = new Error(`${PREFLIGHT_ERROR_PREFIX} invalid_site_url=${cfg.site_url}`);
+      err.code = "PREFLIGHT_CONNECTIVITY";
+      throw err;
+    }
+  }
+
+  const probe = await tcpConnectProbe(host, port, PREFLIGHT_CONNECT_TIMEOUT_MS);
   if (probe.ok) {
     markRecoverySuccess();
     return;
   }
 
   const err = new Error(
-    `${PREFLIGHT_ERROR_PREFIX} host=${host} port=443 reason=${probe.reason} timeout_ms=${PREFLIGHT_CONNECT_TIMEOUT_MS} ons=${job.ons_code} ref=${job.application_ref}`,
+    `${PREFLIGHT_ERROR_PREFIX} host=${host} port=${port} reason=${probe.reason} timeout_ms=${PREFLIGHT_CONNECT_TIMEOUT_MS} ons=${job.ons_code} ref=${job.application_ref} ${targetLabel}`,
   );
   err.code = "PREFLIGHT_CONNECTIVITY";
   throw err;
@@ -235,11 +293,11 @@ async function getConfigForOns(onsCode) {
   return rows[0] || null;
 }
 
-function runCommand(command, args, timeoutMs) {
+function runCommand(command, args, timeoutMs, envOverrides = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, ...envOverrides },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -358,7 +416,7 @@ async function executeScrape(job, cfg) {
   ];
 
   const startedAt = new Date().toISOString();
-  const proc = await runCommand(process.execPath, args, SCRAPER_TIMEOUT_MS);
+  const proc = await runCommand(process.execPath, args, SCRAPER_TIMEOUT_MS, SCRAPER_PROXY_ENV);
   const finishedAt = new Date().toISOString();
 
   if (proc.timedOut) {

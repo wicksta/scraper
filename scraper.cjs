@@ -12,6 +12,9 @@ const argv = yargs(hideBin(process.argv))
   .option('mapper', { type: 'string', describe: 'Path to mapping module', demandOption: false })
   .option('area-name', { type: 'string', describe: 'LPA name', demandOption: false })
   .option('ons-code', { type: 'string', describe: 'ONS code', demandOption: false })
+  .option('proxy-server', { type: 'string', describe: 'Proxy host:port or URL for Playwright (optional)', demandOption: false })
+  .option('proxy-username', { type: 'string', describe: 'Proxy username (optional)', demandOption: false })
+  .option('proxy-password', { type: 'string', describe: 'Proxy password (optional)', demandOption: false })
   .option('headed', { type: 'boolean', describe: 'Run with browser visible', default: false })
   .option('artifacts', { type: 'boolean', describe: 'Write HTML/PNG/JSON artifacts to disk', default: false })
   .option('emit-json', { type: 'boolean', describe: 'Emit UNIFIED/PLANIT JSON to stdout (worker-friendly)', default: true })
@@ -233,6 +236,39 @@ function requireMapper(mapperPath) {
   return mod;
 }
 
+function resolveProxyConfig() {
+  const rawUrl = process.env.SCRAPER_PROXY_URL || '';
+  const rawServer = argv['proxy-server'] || process.env.SCRAPER_PROXY_SERVER || '';
+  const rawUsername = argv['proxy-username'] || process.env.SCRAPER_PROXY_USERNAME || '';
+  const rawPassword = argv['proxy-password'] || process.env.SCRAPER_PROXY_PASSWORD || '';
+
+  let server = '';
+  let username = '';
+  let password = '';
+
+  if (rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      server = `${u.protocol}//${u.host}`;
+      username = decodeURIComponent(u.username || '');
+      password = decodeURIComponent(u.password || '');
+    } catch {
+      // Fall back to explicit server/username/password values.
+    }
+  }
+
+  if (!server && rawServer) server = String(rawServer).trim();
+  if (!username && rawUsername) username = String(rawUsername);
+  if (!password && rawPassword) password = String(rawPassword);
+  if (!server) return null;
+
+  const normalizedServer = /^[a-z]+:\/\//i.test(server) ? server : `http://${server}`;
+  const proxy = { server: normalizedServer };
+  if (username) proxy.username = username;
+  if (password) proxy.password = password;
+  return proxy;
+}
+
 // ---- Run ---------------------------------------------------------------
 
 (async () => {
@@ -248,8 +284,15 @@ function requireMapper(mapperPath) {
     'https://idoxpa.westminster.gov.uk/online-applications/search.do?action=advanced&searchType=Application';
 
   const mapper = requireMapper(mapperPath);
+  const proxy = resolveProxyConfig();
 
-  const browser = await chromium.launch({ headless: !hasFlag('--headed') });
+  const browser = await chromium.launch({
+    headless: !hasFlag('--headed'),
+    ...(proxy ? { proxy } : {}),
+  });
+  if (proxy) {
+    console.log(`Using proxy server: ${proxy.server}`);
+  }
   const page = await browser.newPage();
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-GB,en;q=0.9' });
 
