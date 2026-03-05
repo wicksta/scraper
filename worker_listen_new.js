@@ -6,7 +6,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import pg from "pg";
+import wfsModule from "./wcc_wfs_geometry.cjs";
 const { Client } = pg;
+const { fetchGeometryByKeyVal } = wfsModule;
 
 const CHANNEL = "scrape_job_created";
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}:${process.pid}`;
@@ -35,6 +37,7 @@ const ALLOWED_SCRAPER_ENTRYPOINTS = new Set([
 ]);
 const PREFLIGHT_ERROR_PREFIX = "PREFLIGHT_CONNECTIVITY:";
 const SCRAPER_PROXY_ENV = resolveScraperProxyEnv(process.env);
+const WESTMINSTER_ONS_CODE = "E09000033";
 
 let client;
 let draining = false;
@@ -339,6 +342,103 @@ function parseEmittedJson(stdout, marker) {
   }
 }
 
+function isWestminsterJob(job, cfg) {
+  return (
+    String(job?.ons_code || "").trim().toUpperCase() === WESTMINSTER_ONS_CODE &&
+    String(cfg?.mapper_path || "").trim() === "mappers/westminster.cjs"
+  );
+}
+
+function extractKeyValFromUnified(unified) {
+  const direct = String(unified?.keyVal || "").trim();
+  if (direct) return direct;
+
+  const summaryUrl = String(unified?.tabs?.summary?.url || "").trim();
+  if (!summaryUrl) return "";
+  try {
+    const u = new URL(summaryUrl);
+    return String(u.searchParams.get("keyVal") || "").trim();
+  } catch {
+    const m = summaryUrl.match(/[?&]keyVal=([A-Za-z0-9]+)/);
+    return m ? String(m[1] || "").trim() : "";
+  }
+}
+
+async function transformPointToWgs84(easting, northing, srid) {
+  const { rows } = await client.query(
+    `
+      SELECT
+        ST_Y(ST_Transform(ST_SetSRID(ST_MakePoint($1::double precision, $2::double precision), $3::int), 4326)) AS lat,
+        ST_X(ST_Transform(ST_SetSRID(ST_MakePoint($1::double precision, $2::double precision), $3::int), 4326)) AS lon
+    `,
+    [easting, northing, srid],
+  );
+  const lat = Number(rows?.[0]?.lat);
+  const lon = Number(rows?.[0]?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+async function enrichWithWestminsterGeometry(job, cfg, result) {
+  if (!isWestminsterJob(job, cfg)) return result;
+
+  const unified = result?.unified || null;
+  const keyVal = extractKeyValFromUnified(unified);
+  if (!keyVal) {
+    return {
+      ...result,
+      wfs_lookup: { ok: false, skipped: true, reason: "missing_keyval" },
+    };
+  }
+
+  try {
+    const geom = await fetchGeometryByKeyVal(keyVal);
+    const enriched = {
+      ...result,
+      wfs_lookup: {
+        ok: true,
+        keyval: keyVal,
+        geometry: geom,
+      },
+    };
+
+    const centroidE = Number(geom?.centroid?.e);
+    const centroidN = Number(geom?.centroid?.n);
+    const srid = Number(geom?.srid || 27700);
+    const hasCentroid = Number.isFinite(centroidE) && Number.isFinite(centroidN);
+
+    if (!hasCentroid) return enriched;
+
+    const coords = await transformPointToWgs84(centroidE, centroidN, srid);
+    if (!coords) return enriched;
+
+    const nextPlanit = enriched?.planit && typeof enriched.planit === "object" ? { ...enriched.planit } : {};
+    const inner = nextPlanit?.planit && typeof nextPlanit.planit === "object" ? { ...nextPlanit.planit } : {};
+
+    // Preserve mapped coordinates when already present.
+    if (inner.lat == null) inner.lat = coords.lat;
+    if (inner.lng == null) inner.lng = coords.lon;
+    if (inner.location_x == null && inner.location_y == null && inner.lat != null && inner.lng != null) {
+      inner.location_x = inner.lat;
+      inner.location_y = inner.lng;
+    }
+    if (inner.easting == null) inner.easting = centroidE;
+    if (inner.northing == null) inner.northing = centroidN;
+
+    nextPlanit.planit = inner;
+    return { ...enriched, planit: nextPlanit };
+  } catch (err) {
+    return {
+      ...result,
+      wfs_lookup: {
+        ok: false,
+        keyval: keyVal,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
 function ensureSafeRepoRelativePath(inputPath, kind) {
   if (!inputPath || !String(inputPath).trim()) {
     throw new Error(`Missing ${kind} path in lpa_scrape_configs.`);
@@ -431,8 +531,7 @@ async function executeScrape(job, cfg) {
 
   const unified = parseEmittedJson(proc.stdout, "__UNIFIED_JSON__");
   const planit = parseEmittedJson(proc.stdout, "__PLANIT_JSON__");
-
-  return {
+  const baseResult = {
     started_at: startedAt,
     finished_at: finishedAt,
     scraper_entrypoint: scraper.normalized,
@@ -448,6 +547,8 @@ async function executeScrape(job, cfg) {
     stdout_tail: tail(proc.stdout),
     stderr_tail: tail(proc.stderr),
   };
+
+  return await enrichWithWestminsterGeometry(job, cfg, baseResult);
 }
 
 async function markSuccess(job, result) {
