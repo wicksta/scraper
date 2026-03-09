@@ -16,6 +16,10 @@
     "detect:newmark-jobcodes": "node scripts/detect_newmark_jobcodes.js",
     "detect:newmark-jobcode:uid": "node scripts/detect_newmark_jobcode_for_uid.js",
     "detect:newmark-jobcode:tick": "node scripts/detect_newmark_jobcode_tick.js",
+    "ingest:newmark-cover-letters": "node scripts/ingest_newmark_cover_letters.js",
+    "rag:cover-letters": "node scripts/rag_cover_letter_search_responses.js",
+    "write:cover-letter": "node scripts/write_cover_letter_from_rag.js",
+    "write:cover-letter:json": "node scripts/write_cover_letter_renderer_json.js",
     "db:pg": "node scripts/open_pg_cli.js",
     "db:mysql": "node scripts/open_mysql_cli.js"
   },
