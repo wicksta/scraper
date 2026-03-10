@@ -47,7 +47,7 @@ const argv = yargs(hideBin(process.argv))
   .option("extract-applicant-with-openai", {
     type: "boolean",
     default: false,
-    describe: "Use OpenAI on extracted cover-letter text to infer applicant name/entity.",
+    describe: "Use OpenAI on extracted planning-statement text to infer applicant name/entity.",
   })
   .option("openai-model", {
     type: "string",
@@ -194,15 +194,9 @@ function isNewmarkAgent(name) {
   return txt.includes("newmark") || txt.includes("gerald eve");
 }
 
-function classifyCoverDoc(doc) {
+function classifyPlanningStatementDoc(doc) {
   const hay = `${doc.document_type || ""} ${doc.description || ""}`.toLowerCase();
-  return (
-    /cover(?:ing)?\s+letter/.test(hay) ||
-    /planning\s+letter/.test(hay) ||
-    /applicant.*cover/.test(hay) ||
-    /agent.*cover/.test(hay) ||
-    /covering\s+statement/.test(hay)
-  );
+  return /planning\s+statement/.test(hay);
 }
 
 function toAbsoluteUrl(baseUrl, href) {
@@ -406,13 +400,13 @@ async function extractApplicantWithOpenAi(text, model, maxChars, timeoutMs) {
           {
             role: "system",
             content:
-              "Extract structured data from UK planning cover letters. Return strict JSON only.",
+              "Extract structured data from UK planning statements and supporting statements. Return strict JSON only.",
           },
           {
             role: "user",
-            content: `From this cover letter text, identify:
+            content: `From this planning statement text, identify:
 1) the applicant entity (often phrased as "on behalf of ...")
-2) the Newmark team contacts responsible, often in a closing paragraph such as "If you have any queries, please contact X or Y"
+2) the Newmark team contacts responsible, if named in the statement or related sign-off/contact text
 Return JSON with keys:
 - applicant_name (string or null)
 - evidence_quote (short exact phrase from the text)
@@ -538,34 +532,34 @@ async function main() {
           docs_count: docs.length,
         });
 
-        const coverDocs = docs.filter(classifyCoverDoc);
-        result.cover_docs_considered = coverDocs;
-        if (!coverDocs.length) {
-          result.notes.push("no_cover_letter_doc_found");
-          result.status = "no_cover_letter";
+        const planningStatementDocs = docs.filter(classifyPlanningStatementDoc);
+        result.cover_docs_considered = planningStatementDocs;
+        if (!planningStatementDocs.length) {
+          result.notes.push("no_planning_statement_doc_found");
+          result.status = "no_planning_statement";
         } else {
-          const first = coverDocs[0];
+          const first = planningStatementDocs[0];
           result.source_doc_description = first.description || null;
           result.source_doc_url = toAbsoluteUrl(page.url(), first.href);
 
           if (!result.source_doc_url) {
-            result.notes.push("cover_letter_url_invalid");
-            result.status = "cover_letter_url_invalid";
+            result.notes.push("planning_statement_url_invalid");
+            result.status = "planning_statement_url_invalid";
           } else {
             const appDir = path.join(artifactsRoot, result.reference.replace(/[^A-Za-z0-9._-]/g, "_"));
             mkdirp(appDir);
-            const pdfPath = path.join(appDir, "cover_letter.pdf");
-            const txtPath = path.join(appDir, "cover_letter.txt");
+            const pdfPath = path.join(appDir, "planning_statement.pdf");
+            const txtPath = path.join(appDir, "planning_statement.txt");
 
             const response = await context.request.get(result.source_doc_url, { timeout: Number(argv["timeout-ms"]) });
             if (!response.ok()) {
-              throw new Error(`cover_letter_download_http_${response.status()}`);
+              throw new Error(`planning_statement_download_http_${response.status()}`);
             }
             const body = await response.body();
             if (!responseLooksLikePdf(response, body)) {
-              result.notes.push("cover_letter_non_pdf_skipped");
+              result.notes.push("planning_statement_non_pdf_skipped");
               result.status = "unsupported_non_pdf_doc";
-              logEvent("cover_letter_non_pdf_skipped", {
+              logEvent("planning_statement_non_pdf_skipped", {
                 reference: result.reference,
                 source_doc_url: result.source_doc_url,
                 content_type: response.headers()["content-type"] || null,
@@ -577,10 +571,10 @@ async function main() {
               try {
                 text = await runPdftotext(pdfPath);
               } catch (pdfErr) {
-                result.notes.push("cover_letter_pdftotext_failed");
+                result.notes.push("planning_statement_pdftotext_failed");
                 result.status = "pdf_text_extract_failed";
-                result.error = result.error || `cover_letter_pdftotext_failed: ${pdfErr instanceof Error ? pdfErr.message : String(pdfErr)}`;
-                logEvent("cover_letter_pdftotext_failed", {
+                result.error = result.error || `planning_statement_pdftotext_failed: ${pdfErr instanceof Error ? pdfErr.message : String(pdfErr)}`;
+                logEvent("planning_statement_pdftotext_failed", {
                   reference: result.reference,
                   source_doc_url: result.source_doc_url,
                   error: pdfErr instanceof Error ? pdfErr.message : String(pdfErr),
