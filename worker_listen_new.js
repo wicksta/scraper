@@ -2,6 +2,7 @@
 import "./bootstrap.js";
 import { spawn } from "node:child_process";
 import fsSync from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,8 @@ import pg from "pg";
 import wfsModule from "./wcc_wfs_geometry.cjs";
 const { Client } = pg;
 const { fetchGeometryByKeyVal } = wfsModule;
+const require = createRequire(import.meta.url);
+const { extractUkPostcode, resolvePostcodeViaOnspd } = require("./library.cjs");
 
 const CHANNEL = "scrape_job_created";
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}:${process.pid}`;
@@ -364,6 +367,86 @@ function extractKeyValFromUnified(unified) {
   }
 }
 
+function getPlanitInner(result) {
+  const outer = result?.planit && typeof result.planit === "object" ? result.planit : null;
+  const inner = outer?.planit && typeof outer.planit === "object" ? outer.planit : null;
+  return inner;
+}
+
+function withPlanitInner(result, nextInner) {
+  const nextPlanit = result?.planit && typeof result.planit === "object" ? { ...result.planit } : {};
+  nextPlanit.planit = nextInner;
+  return { ...result, planit: nextPlanit };
+}
+
+async function enrichWithPostcodeFallback(result, trigger) {
+  const inner = getPlanitInner(result);
+  if (!inner) {
+    return {
+      ...result,
+      postcode_lookup: { ok: false, skipped: true, reason: "missing_planit_payload", trigger },
+    };
+  }
+
+  if (inner.lat != null && inner.lng != null) return result;
+
+  const postcode = extractUkPostcode(inner.postcode || inner.address || "");
+  if (!postcode) {
+    return {
+      ...result,
+      postcode_lookup: { ok: false, skipped: true, reason: "missing_postcode", trigger },
+    };
+  }
+
+  try {
+    const geo = await resolvePostcodeViaOnspd(postcode, {
+      timeoutMs: Number(process.env.POSTCODE_LOOKUP_TIMEOUT_MS || 6000),
+    });
+    if (!geo?.success) {
+      return {
+        ...result,
+        postcode_lookup: {
+          ok: false,
+          postcode,
+          trigger,
+          error: String(geo?.error || "lookup_failed"),
+        },
+      };
+    }
+
+    const nextInner = { ...inner };
+    if (nextInner.lat == null) nextInner.lat = geo.lat;
+    if (nextInner.lng == null) nextInner.lng = geo.long;
+    if (nextInner.location_x == null && nextInner.location_y == null && nextInner.lat != null && nextInner.lng != null) {
+      nextInner.location_x = nextInner.lat;
+      nextInner.location_y = nextInner.lng;
+    }
+
+    return {
+      ...withPlanitInner(result, nextInner),
+      postcode_lookup: {
+        ok: true,
+        postcode,
+        trigger,
+        lat: geo.lat,
+        lon: geo.long,
+        lad25cd: geo.lad25cd ?? null,
+        terminated: geo.terminated ?? null,
+      },
+    };
+  } catch (err) {
+    return {
+      ...result,
+      postcode_lookup: {
+        ok: false,
+        postcode,
+        trigger,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
 async function transformPointToWgs84(easting, northing, srid) {
   const { rows } = await client.query(
     `
@@ -385,10 +468,11 @@ async function enrichWithWestminsterGeometry(job, cfg, result) {
   const unified = result?.unified || null;
   const keyVal = extractKeyValFromUnified(unified);
   if (!keyVal) {
-    return {
+    const next = {
       ...result,
       wfs_lookup: { ok: false, skipped: true, reason: "missing_keyval" },
     };
+    return await enrichWithPostcodeFallback(next, "missing_keyval");
   }
 
   try {
@@ -407,28 +491,32 @@ async function enrichWithWestminsterGeometry(job, cfg, result) {
     const srid = Number(geom?.srid || 27700);
     const hasCentroid = Number.isFinite(centroidE) && Number.isFinite(centroidN);
 
-    if (!hasCentroid) return enriched;
+    if (!hasCentroid) return await enrichWithPostcodeFallback(enriched, "wfs_no_centroid");
 
     const coords = await transformPointToWgs84(centroidE, centroidN, srid);
-    if (!coords) return enriched;
+    if (!coords) return await enrichWithPostcodeFallback(enriched, "wfs_transform_failed");
 
-    const nextPlanit = enriched?.planit && typeof enriched.planit === "object" ? { ...enriched.planit } : {};
-    const inner = nextPlanit?.planit && typeof nextPlanit.planit === "object" ? { ...nextPlanit.planit } : {};
+    const inner = getPlanitInner(enriched);
+    const nextInner = inner && typeof inner === "object" ? { ...inner } : {};
 
     // Preserve mapped coordinates when already present.
-    if (inner.lat == null) inner.lat = coords.lat;
-    if (inner.lng == null) inner.lng = coords.lon;
-    if (inner.location_x == null && inner.location_y == null && inner.lat != null && inner.lng != null) {
-      inner.location_x = inner.lat;
-      inner.location_y = inner.lng;
+    if (nextInner.lat == null) nextInner.lat = coords.lat;
+    if (nextInner.lng == null) nextInner.lng = coords.lon;
+    if (
+      nextInner.location_x == null &&
+      nextInner.location_y == null &&
+      nextInner.lat != null &&
+      nextInner.lng != null
+    ) {
+      nextInner.location_x = nextInner.lat;
+      nextInner.location_y = nextInner.lng;
     }
-    if (inner.easting == null) inner.easting = centroidE;
-    if (inner.northing == null) inner.northing = centroidN;
+    if (nextInner.easting == null) nextInner.easting = centroidE;
+    if (nextInner.northing == null) nextInner.northing = centroidN;
 
-    nextPlanit.planit = inner;
-    return { ...enriched, planit: nextPlanit };
+    return withPlanitInner(enriched, nextInner);
   } catch (err) {
-    return {
+    const next = {
       ...result,
       wfs_lookup: {
         ok: false,
@@ -436,6 +524,7 @@ async function enrichWithWestminsterGeometry(job, cfg, result) {
         error: err instanceof Error ? err.message : String(err),
       },
     };
+    return await enrichWithPostcodeFallback(next, "wfs_error");
   }
 }
 
