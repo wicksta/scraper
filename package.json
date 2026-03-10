@@ -12,6 +12,7 @@
     "backfill:wfs-geometry": "node application_backfill_wfs_geometry.js",
     "backfill:postcode-geo": "node application_backfill_postcode_geo.js",
     "backfill:postcode-geo:applications": "node application_backfill_postcode_geo_applications.js",
+    "lookup:policy-designations": "node scripts/policy_designations_lookup.js",
     "cache:refresh": "node scripts/refresh_query_cache.js",
     "detect:newmark-jobcodes": "node scripts/detect_newmark_jobcodes.js",
     "detect:newmark-jobcode:uid": "node scripts/detect_newmark_jobcode_for_uid.js",

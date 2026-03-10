@@ -18,6 +18,13 @@ Required keys:
 Optional alternative:
 - `DATABASE_URL`
 
+MySQL keys used by some scripts:
+- `MYSQL_HOST`
+- `MYSQL_PORT`
+- `MYSQL_DATABASE`
+- `MYSQL_USER`
+- `MYSQL_PASSWORD`
+
 Rules:
 - Never hardcode credentials.
 - Prefer `DATABASE_URL` when set, otherwise build config from `PG*` vars.
@@ -186,6 +193,93 @@ Columns:
 Constraints:
 - `extract_jobs_pkey` primary key (`id`)
 
+### `planning_statement_workspaces`
+Purpose: canonical workspace record for planning statement drafting tied to a job/application.
+
+Columns:
+- `id uuid not null default gen_random_uuid()` (PK)
+- `job_number text not null`
+- `application_ref text not null`
+- `application_id bigint`
+- `synthetic_id text`
+- `title text`
+- `site_address text`
+- `client_name text`
+- `local_authority text`
+- `facts_json jsonb not null default '{}'::jsonb`
+- `style_guidance_json jsonb not null default '{}'::jsonb`
+- `created_by integer`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes:
+- `planning_statement_workspaces_job_number_idx` (btree on `job_number`)
+- `planning_statement_workspaces_application_ref_idx` (btree on `application_ref`)
+- `planning_statement_workspaces_application_id_idx` (btree on `application_id`)
+- `planning_statement_workspaces_synthetic_id_idx` (btree on `synthetic_id`)
+- `planning_statement_workspaces_facts_gin` (GIN on `facts_json`)
+- `planning_statement_workspaces_style_guidance_gin` (GIN on `style_guidance_json`)
+
+### `planning_statement_sections`
+Purpose: ordered section definitions plus saved draft output and reusable section memory for a workspace.
+
+Columns:
+- `id uuid not null default gen_random_uuid()` (PK)
+- `workspace_id uuid not null` (FK -> `planning_statement_workspaces.id`)
+- `section_key text not null`
+- `title text not null`
+- `position integer not null`
+- `is_selected boolean not null default true`
+- `status text not null default 'not_started'`
+- `draft_text text`
+- `draft_summary text`
+- `prompt_context jsonb not null default '{}'::jsonb`
+- `generation_meta jsonb not null default '{}'::jsonb`
+- `last_drafted_at timestamptz`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Constraints:
+- `planning_statement_sections_pkey` primary key (`id`)
+- `planning_statement_sections_workspace_key_uq` unique (`workspace_id`, `section_key`)
+
+Indexes:
+- `planning_statement_sections_workspace_position_idx` (btree on `workspace_id`, `position`)
+- `planning_statement_sections_workspace_status_idx` (btree on `workspace_id`, `status`)
+- `planning_statement_sections_prompt_context_gin` (GIN on `prompt_context`)
+- `planning_statement_sections_generation_meta_gin` (GIN on `generation_meta`)
+
+### `planning_statement_workspace_documents`
+Purpose: workspace-level attachment table linking drafting workspaces to supporting documents in `public.documents`.
+
+Columns:
+- `workspace_id uuid not null` (FK -> `planning_statement_workspaces.id`)
+- `doc_id uuid not null` (FK -> `documents.id`)
+- `display_title text`
+- `notes text`
+- `created_at timestamptz not null default now()`
+
+Constraints:
+- PK: (`workspace_id`, `doc_id`)
+
+Indexes:
+- `planning_statement_workspace_documents_doc_idx` (btree on `doc_id`)
+
+### `planning_statement_section_documents`
+Purpose: many-to-many link assigning supporting documents to specific planning statement sections.
+
+Columns:
+- `section_id uuid not null` (FK -> `planning_statement_sections.id`)
+- `doc_id uuid not null` (FK -> `documents.id`)
+- `relevance_note text`
+- `created_at timestamptz not null default now()`
+
+Constraints:
+- PK: (`section_id`, `doc_id`)
+
+Indexes:
+- `planning_statement_section_documents_doc_idx` (btree on `doc_id`)
+
 ### `applications`
 Purpose: long-term canonical storage for scraped planning applications (separate from `scrape_jobs`), with a compatibility view for legacy MySQL consumers.
 
@@ -244,6 +338,29 @@ Objects present in `public`:
 - `geometry_columns` (view)
 - `geography_columns` (view)
 - `spatial_ref_sys` (table, PK `srid`)
+
+## MySQL Schema Notes
+
+### `lpa_codes`
+Purpose: canonical lookup table for LPAs used by scraper/runtime integration and external dataset matching.
+
+Selected columns:
+- `mhclg_code varchar(10)`
+- `ons_code varchar(10)`
+- `lpa_name varchar(255)`
+- `full_name varchar(255)`
+- `short_ref tinytext`
+- `local_planning_authority varchar(10)` (`E600...` planning.data.gov.uk LPA code where present)
+- `organisation_entity int`
+- `planit_area_id int`
+- `pld_name varchar(100)`
+- `planit_area varchar(100)`
+- `datastore_id tinyint unsigned null`
+
+Notes:
+- `datastore_id` maps London Datastore ArcGIS borough services `planning_local_plan_data_XX` to `lpa_codes` rows.
+- Current mapping is populated for London borough ONS codes `E09000001` through `E09000033`, corresponding to service ids `1` through `33`.
+- `LLDC` and `OPDC` do not currently have matching rows in `lpa_codes`, so no `datastore_id` values are stored for service ids `34` or `35`.
 
 ## Worker/Queue Notes
 - `worker_listen.js` subscribes to PostgreSQL `LISTEN` channel `scrape_job_created`.
