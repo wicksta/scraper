@@ -2,11 +2,16 @@
 import "./../bootstrap.js";
 
 import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
 
 const { Client } = pg;
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(scriptDir, "..");
+const uidWorkerPath = path.join(rootDir, "scripts", "detect_newmark_jobcode_for_uid.js");
 
 const argv = yargs(hideBin(process.argv))
   .scriptName("detect-newmark-jobcode-tick")
@@ -90,7 +95,7 @@ function logEvent(event, payload = {}) {
 function runUidWorker({ uid, onsCode, timeoutMs, openaiModel, extractApplicantWithOpenAi }) {
   return new Promise((resolve, reject) => {
     const args = [
-      "scripts/detect_newmark_jobcode_for_uid.js",
+      uidWorkerPath,
       "--uid",
       uid,
       "--ons-code",
@@ -105,7 +110,7 @@ function runUidWorker({ uid, onsCode, timeoutMs, openaiModel, extractApplicantWi
     }
 
     const child = spawn(process.execPath, args, {
-      cwd: process.cwd(),
+      cwd: rootDir,
       stdio: "inherit",
       env: process.env,
     });

@@ -16,8 +16,15 @@ const argv = yargs(hideBin(process.argv))
   .scriptName("detect-newmark-jobcode-for-uid")
   .option("uid", {
     type: "string",
-    demandOption: true,
     describe: "Application UID/reference to inspect (e.g. 25/07409/ADFULL).",
+  })
+  .option("reference", {
+    type: "string",
+    describe: "Explicit application reference. If used with --keyval, skips application lookup.",
+  })
+  .option("keyval", {
+    type: "string",
+    describe: "Explicit Idox keyval. If used with --reference, skips application lookup.",
   })
   .option("ons-code", {
     type: "string",
@@ -44,6 +51,16 @@ const argv = yargs(hideBin(process.argv))
     default: "./tmp/newmark_jobcode_uid_result.json",
     describe: "Path for single-run JSON output.",
   })
+  .option("skip-upsert", {
+    type: "boolean",
+    default: false,
+    describe: "If true, do not persist the result row to public.newmark_jobcode_candidates.",
+  })
+  .option("debug-docs", {
+    type: "boolean",
+    default: false,
+    describe: "If true, log parsed document rows to help diagnose document matching issues.",
+  })
   .option("extract-applicant-with-openai", {
     type: "boolean",
     default: false,
@@ -62,6 +79,10 @@ const argv = yargs(hideBin(process.argv))
   .strict()
   .help()
   .argv;
+
+if (!String(argv.uid || "").trim() && !(String(argv.reference || "").trim() && String(argv.keyval || "").trim())) {
+  throw new Error("Provide --uid, or provide both --reference and --keyval.");
+}
 
 const DOCS_BASE = "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=documents&keyVal=";
 
@@ -199,6 +220,17 @@ function classifyPlanningStatementDoc(doc) {
   return /planning\s+statement/.test(hay);
 }
 
+function buildDocumentDebugSummary(docs) {
+  const normalized = Array.isArray(docs) ? docs : [];
+  const interesting = normalized.filter((doc) => /\bplanning\b|\bstatement\b|\btown\b/i.test(`${doc.document_type || ""} ${doc.description || ""}`));
+  return {
+    total_docs: normalized.length,
+    interesting_docs_count: interesting.length,
+    interesting_docs: interesting.slice(0, 25),
+    first_docs: normalized.slice(0, 25),
+  };
+}
+
 function toAbsoluteUrl(baseUrl, href) {
   try {
     return new URL(href, baseUrl).toString();
@@ -295,16 +327,32 @@ function extractJobCodesFromText(text) {
 }
 
 async function parseDocumentsTable(page) {
-  return page.$$eval("#Documents tbody tr, table#Documents tbody tr, table[id='Documents'] tbody tr", (rows) => {
+  return page.$eval("#Documents", (table) => {
     const docs = [];
+    const headerCells = Array.from(table.querySelectorAll("thead th"));
+    const normalizedHeaders = headerCells.map((cell) => (cell.textContent || "").trim().toLowerCase());
+    const findHeaderIndex = (patterns) =>
+      normalizedHeaders.findIndex((header) => patterns.some((pattern) => pattern.test(header)));
+
+    const dateIdx = findHeaderIndex([/\bdate\b/, /\bpublished\b/]);
+    const docTypeIdx = findHeaderIndex([/\bdocument\s*type\b/, /\btype\b/]);
+    const descriptionIdx = findHeaderIndex([/\bdescription\b/, /\btitle\b/]);
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+
     for (const row of rows) {
       const cells = row.querySelectorAll("td");
       if (!cells || cells.length < 4) continue;
 
-      const viewCell = cells[cells.length - 1];
-      const descriptionCell = cells[cells.length - 2];
-      const docTypeCell = cells[cells.length - 3];
-      const dateCell = cells[cells.length - 4];
+      const cellAt = (headerIndex, fallbackIndexFromEnd) => {
+        if (headerIndex >= 0 && headerIndex < cells.length) return cells[headerIndex];
+        const idx = cells.length - fallbackIndexFromEnd;
+        return idx >= 0 ? cells[idx] : null;
+      };
+
+      const viewCell = cellAt(-1, 1);
+      const descriptionCell = cellAt(descriptionIdx, 2);
+      const docTypeCell = cellAt(docTypeIdx, 3);
+      const dateCell = cellAt(dateIdx, 4);
 
       const viewLink = viewCell?.querySelector("a")?.getAttribute("href") || null;
       if (!viewLink) continue;
@@ -331,6 +379,10 @@ function buildDefaultResult(uid, onsCode) {
     source_doc_url: null,
     source_doc_description: null,
     cover_docs_considered: [],
+    planning_statement_files: {
+      pdf_path: null,
+      text_path: null,
+    },
     job_codes_found: [],
     job_code_parts: [],
     applicant_name_extracted: null,
@@ -467,12 +519,18 @@ async function main() {
   const artifactsResolution = resolveWritableArtifactsDir(argv["artifacts-dir"], "/tmp/newmark_jobcode_uid_artifacts");
   const artifactsRoot = artifactsResolution.dir;
 
-  const uid = String(argv.uid || "").trim();
+  const uid = String(argv.uid || argv.reference || "").trim();
   const onsCode = String(argv["ons-code"] || "").trim();
   const result = buildDefaultResult(uid, onsCode);
+  const explicitReference = String(argv.reference || "").trim();
+  const explicitKeyval = String(argv.keyval || "").trim();
+  const shouldLookupApplication = !(explicitReference && explicitKeyval);
 
-  const pgClient = new Client(getPgClientConfig());
-  await pgClient.connect();
+  let pgClient = null;
+  if (shouldLookupApplication || !argv["skip-upsert"]) {
+    pgClient = new Client(getPgClientConfig());
+    await pgClient.connect();
+  }
 
   let browser;
   try {
@@ -484,27 +542,39 @@ async function main() {
       });
     }
 
-    const appRes = await pgClient.query(FIND_APP_SQL, [onsCode, uid]);
-    if (!appRes.rows.length) {
-      result.notes.push("application_not_found");
-      result.error = "No matching application found in public.applications";
-      result.status = "not_found";
-      logEvent("application_lookup", { status: "miss", uid, ons_code: onsCode });
-      fs.writeFileSync(outputJsonPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
-      return;
-    }
+    if (shouldLookupApplication) {
+      const appRes = await pgClient.query(FIND_APP_SQL, [onsCode, uid]);
+      if (!appRes.rows.length) {
+        result.notes.push("application_not_found");
+        result.error = "No matching application found in public.applications";
+        result.status = "not_found";
+        logEvent("application_lookup", { status: "miss", uid, ons_code: onsCode });
+        fs.writeFileSync(outputJsonPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+        return;
+      }
 
-    const app = appRes.rows[0];
-    result.reference = String(app.reference || "").trim();
-    result.keyval = String(app.keyval || "").trim();
-    result.agent_company_name = String(app.agent_company_name || "").trim();
-    result.is_newmark = isNewmarkAgent(result.agent_company_name);
-    logEvent("application_lookup", {
-      status: "hit",
-      reference: result.reference,
-      is_newmark: result.is_newmark,
-      has_keyval: Boolean(result.keyval),
-    });
+      const app = appRes.rows[0];
+      result.reference = String(app.reference || "").trim();
+      result.keyval = String(app.keyval || "").trim();
+      result.agent_company_name = String(app.agent_company_name || "").trim();
+      result.is_newmark = isNewmarkAgent(result.agent_company_name);
+      logEvent("application_lookup", {
+        status: "hit",
+        reference: result.reference,
+        is_newmark: result.is_newmark,
+        has_keyval: Boolean(result.keyval),
+      });
+    } else {
+      result.reference = explicitReference;
+      result.keyval = explicitKeyval;
+      result.agent_company_name = null;
+      result.is_newmark = true;
+      logEvent("application_lookup", {
+        status: "skipped",
+        reference: result.reference,
+        has_keyval: Boolean(result.keyval),
+      });
+    }
 
     if (!result.is_newmark) {
       result.notes.push("not_newmark_agent_company");
@@ -531,6 +601,12 @@ async function main() {
           keyval: result.keyval,
           docs_count: docs.length,
         });
+        if (argv["debug-docs"]) {
+          logEvent("documents_debug", {
+            reference: result.reference,
+            ...buildDocumentDebugSummary(docs),
+          });
+        }
 
         const planningStatementDocs = docs.filter(classifyPlanningStatementDoc);
         result.cover_docs_considered = planningStatementDocs;
@@ -546,10 +622,11 @@ async function main() {
             result.notes.push("planning_statement_url_invalid");
             result.status = "planning_statement_url_invalid";
           } else {
-            const appDir = path.join(artifactsRoot, result.reference.replace(/[^A-Za-z0-9._-]/g, "_"));
+            const safeRef = result.reference.replace(/[^A-Za-z0-9._-]/g, "_");
+            const appDir = path.join(artifactsRoot, safeRef);
             mkdirp(appDir);
-            const pdfPath = path.join(appDir, "planning_statement.pdf");
-            const txtPath = path.join(appDir, "planning_statement.txt");
+            const pdfPath = path.join(appDir, `${safeRef}_planning_statement.pdf`);
+            const txtPath = path.join(appDir, `${safeRef}_planning_statement.txt`);
 
             const response = await context.request.get(result.source_doc_url, { timeout: Number(argv["timeout-ms"]) });
             if (!response.ok()) {
@@ -566,6 +643,7 @@ async function main() {
               });
             } else {
               fs.writeFileSync(pdfPath, body);
+              result.planning_statement_files.pdf_path = pdfPath;
 
               let text = "";
               try {
@@ -583,40 +661,11 @@ async function main() {
 
               if (text) {
                 fs.writeFileSync(txtPath, text, "utf8");
-
-                const hits = extractJobCodesFromText(text);
-                result.job_codes_found = hits.map((h) => h.canonical);
-                let teamResponsibleNames = [];
-                result.match_confidence = hits.length ? "high" : "none";
-                result.status = hits.length ? "matched" : "no_pattern";
-                if (!hits.length) result.notes.push("no_job_code_pattern_found");
-
-                if (argv["extract-applicant-with-openai"]) {
-                  try {
-                    const applicant = await extractApplicantWithOpenAi(
-                      text,
-                      String(argv["openai-model"]),
-                      Number(argv["openai-max-chars"]),
-                      Number(argv["timeout-ms"]),
-                    );
-                    result.applicant_name_extracted = applicant.applicant_name_extracted;
-                    result.applicant_evidence_quote = applicant.applicant_evidence_quote;
-                    result.applicant_confidence = applicant.applicant_confidence;
-                    result.applicant_extraction_model = String(argv["openai-model"]);
-                    teamResponsibleNames = applicant.team_contact_names || [];
-                  } catch (llmErr) {
-                    result.notes.push("applicant_extraction_failed");
-                    result.error = result.error || `applicant_extraction_failed: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`;
-                  }
-                }
-
-                result.job_code_parts = hits.map((h) => ({
-                  partner_initials: h.partner_initials,
-                  assistant_initials: h.assistant_initials,
-                  job_number: h.job_number,
-                  raw: h.raw,
-                  team_responsible_names: teamResponsibleNames,
-                }));
+                result.planning_statement_files.text_path = txtPath;
+                result.status = "planning_statement_saved";
+              } else if (!result.error) {
+                result.notes.push("planning_statement_text_empty");
+                result.status = "planning_statement_text_empty";
               }
             }
           }
@@ -627,7 +676,7 @@ async function main() {
       }
     }
 
-    if (result.reference) {
+    if (result.reference && !argv["skip-upsert"]) {
       await pgClient.query(UPSERT_SQL, [
         result.ons_code,
         result.reference,
@@ -650,6 +699,8 @@ async function main() {
         result.status,
       ]);
       logEvent("upsert_complete", { ons_code: result.ons_code, reference: result.reference, status: result.status });
+    } else if (result.reference) {
+      logEvent("upsert_skipped", { ons_code: result.ons_code, reference: result.reference, status: result.status });
     }
 
     fs.writeFileSync(outputJsonPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
@@ -657,7 +708,8 @@ async function main() {
       uid,
       reference: result.reference,
       status: result.status,
-      matches_found: result.job_codes_found.length,
+      saved_pdf: Boolean(result.planning_statement_files?.pdf_path),
+      saved_text: Boolean(result.planning_statement_files?.text_path),
       output_json: outputJsonPath,
     });
   } catch (err) {

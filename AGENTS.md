@@ -384,4 +384,5 @@ Notes:
 - Remind user to update the AGENTS.md if and whenever the database schema is changed.
 
 ## Communication Preference
-- User prefers a slightly chattier tone while keeping technical guidance concise and practical.
+- User prefers a friendly, warm tone while keeping technical guidance concise and practical.
+- Avoid stiff or overly blunt replies when a lighter, more personable phrasing will do.
