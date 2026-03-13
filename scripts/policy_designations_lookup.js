@@ -74,6 +74,11 @@ const argv = yargs(hideBin(process.argv))
     default: 10,
     describe: "Max features returned per matched layer.",
   })
+  .option("with-geometry", {
+    type: "boolean",
+    default: false,
+    describe: "Include raw geometry for local ArcGIS matches and national planning.data.gov.uk entities.",
+  })
   .option("timeout-ms", {
     type: "number",
     default: 10000,
@@ -222,6 +227,7 @@ function compactNearbyHeritageEntity(entity) {
     dataset: entity.dataset || null,
     name: entity.name || titleCaseLabel(entity.dataset || ""),
     reference: entity.reference || null,
+    listed_building_grade: entity.listedBuildingGrade || null,
     distance_m: entity.distanceMeters ?? null,
     url: entity.documentationUrl || null,
   };
@@ -306,7 +312,10 @@ function buildLlmPayload(raw, options) {
     .map((entity) => `${entity.name || "Scheduled monument"} (${entity.distanceMeters ?? "?"}m)`);
   const listedLines = listed
     .slice(0, Math.max(1, Number(options.listedLimit || 10)))
-    .map((entity) => `${entity.name || "Listed building"} (${entity.distanceMeters ?? "?"}m)`);
+    .map((entity) => {
+      const grade = entity.listedBuildingGrade ? `, Grade ${entity.listedBuildingGrade}` : "";
+      return `${entity.name || "Listed building"} (${entity.distanceMeters ?? "?"}m${grade})`;
+    });
 
   const redFlags = [];
   if (localDesignationLines.some((x) => /world heritage/i.test(x))) redFlags.push("Site lies within or intersects a World Heritage Site.");
@@ -551,8 +560,8 @@ async function main() {
     );
   }
 
-  const result = resolvedLpa?.datastore_id
-    ? await lookupPolicyDesignationsByPoint({
+  const resultPromise = resolvedLpa?.datastore_id
+    ? lookupPolicyDesignationsByPoint({
         lon: input.lon,
         lat: input.lat,
         easting: input.easting,
@@ -560,8 +569,9 @@ async function main() {
         apiBaseUrl: buildArcgisFeatureServerUrl(resolvedLpa.datastore_id),
         timeoutMs: Math.max(1000, Number(argv["timeout-ms"] || 10000)),
         resultRecordCount: Math.max(1, Number(argv["limit-per-layer"] || 10)),
+        includeGeometry: Boolean(argv["with-geometry"]),
       })
-    : {
+    : Promise.resolve({
         apiBaseUrl: null,
         point: Number.isFinite(input.lon) && Number.isFinite(input.lat)
           ? { lon: Number(input.lon), lat: Number(input.lat) }
@@ -575,10 +585,10 @@ async function main() {
         queriedLayerCount: 0,
         matchedLayerCount: 0,
         layers: [],
-      };
+      });
 
-  const planningData = argv["include-planning-data"]
-    ? await lookupPlanningDataDesignations({
+  const planningDataPromise = argv["include-planning-data"]
+    ? lookupPlanningDataDesignations({
         lon: input.lon,
         lat: input.lat,
         datasets: Array.from(argv["planning-data-dataset"] || []).map((x) => String(x)).filter(Boolean),
@@ -586,8 +596,9 @@ async function main() {
         excludePrefixes: Array.from(argv["planning-data-exclude-prefix"] || []).map((x) => String(x)).filter(Boolean),
         limit: Math.max(1, Number(argv["planning-data-limit"] || 50)),
         timeoutMs: Math.max(1000, Number(argv["timeout-ms"] || 10000)),
+        includeGeometry: Boolean(argv["with-geometry"]),
       })
-    : {
+    : Promise.resolve({
         apiUrl: null,
         queried: false,
         reason: "Disabled by --no-include-planning-data",
@@ -595,18 +606,19 @@ async function main() {
         datasets: [],
         count: 0,
         entities: [],
-      };
+      });
 
-  const nearbyHeritage = argv["include-nearby-heritage"]
-    ? await lookupNearbyPlanningDataHeritage({
+  const nearbyHeritagePromise = argv["include-nearby-heritage"]
+    ? lookupNearbyPlanningDataHeritage({
         lon: input.lon,
         lat: input.lat,
         datasets: Array.from(argv["nearby-heritage-dataset"] || []).map((x) => String(x)).filter(Boolean),
         radiusMeters: Math.max(1, Number(argv["nearby-heritage-radius-m"] || 500)),
         limit: Math.max(1, Number(argv["nearby-heritage-limit"] || 100)),
         timeoutMs: Math.max(1000, Number(argv["timeout-ms"] || 10000)),
+        includeGeometry: Boolean(argv["with-geometry"]),
       })
-    : {
+    : Promise.resolve({
         apiUrl: null,
         queried: false,
         reason: "Disabled by --no-include-nearby-heritage",
@@ -615,7 +627,13 @@ async function main() {
         datasets: [],
         count: 0,
         entities: [],
-      };
+      });
+
+  const [result, planningData, nearbyHeritage] = await Promise.all([
+    resultPromise,
+    planningDataPromise,
+    nearbyHeritagePromise,
+  ]);
 
   const payload = {
     ok: true,

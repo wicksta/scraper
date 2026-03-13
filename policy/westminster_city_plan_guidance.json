@@ -1,0 +1,25 @@
+{
+  "document_name": "Westminster City Plan 2019-2040",
+  "policy_heading_rule": "Treat the main numbered policy heading and the immediately following lettered clauses as policy text. For example, a heading such as '4. Spatial Development Priorities: Victoria Opportunity Area' followed by clauses 'A.' to 'I.' is one policy_core unit.",
+  "supporting_paragraph_rule": "Treat numbered paragraphs formatted like '4.1 /', '4.2 /', '18.25 /' and similar as explanatory/supporting text, not as separate policy numbers or policy_core units.",
+  "subheading_rule": "Treat thematic subheadings such as 'Home and jobs growth' or 'Social and community uses and open spaces' as section labels unless they carry an explicit policy number and policy heading.",
+  "known_patterns": [
+    "Lettered clauses A., B., C. etc usually belong to the immediately preceding numbered policy heading.",
+    "Pages containing only figures, maps, captions, or contents material are not policy_core.",
+    "Glossary, appendices, schedules, forewords, and contents pages should not be classified as policy_core.",
+    "A numbered explanatory paragraph can follow a policy and still belong in supporting_text for that policy rather than becoming a new policy."
+  ],
+  "positive_examples": [
+    "'4. Spatial Development Priorities: Victoria Opportunity Area' plus clauses A-I should be treated as one policy_core unit.",
+    "'18. Town centres, high streets and the CAZ' followed by lettered clauses should be treated as a policy_core unit where the clauses contain the operative policy wording."
+  ],
+  "negative_examples": [
+    "'4.5 / With local population numbers expected to rise...' is supporting_text, not Policy 4.5.",
+    "'4.1 / Victoria faces unique pressures and challenges...' is supporting_text, not policy_core.",
+    "'Social and community uses and open spaces' is a section label, not a policy title on its own."
+  ],
+  "classification_notes": [
+    "If a page window contains both a main policy heading with lettered clauses and later numbered explanatory paragraphs, keep the numbered explanatory paragraphs in supporting_text rather than creating a second policy_core unit.",
+    "Prefer under-classifying to policy_core rather than inventing new policies from explanatory numbering."
+  ]
+}

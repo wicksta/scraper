@@ -4,7 +4,7 @@ const DEFAULT_PLANNING_DATA_API_URL = "https://www.planning.data.gov.uk/entity.j
 const DEFAULT_PLANNING_DATA_DATASET_CATALOGUE_URL = "https://www.planning.data.gov.uk/dataset.json";
 const DEFAULT_PLANNING_DATA_EXCLUDED_DATASETS = ["listed-building", "listed-building-outline"];
 const DEFAULT_PLANNING_DATA_EXCLUDED_PREFIXES = ["statistical-geography"];
-const DEFAULT_NEARBY_HERITAGE_DATASETS = ["listed-building", "scheduled-monument"];
+const DEFAULT_NEARBY_HERITAGE_DATASETS = ["listed-building", "listed-building-outline", "scheduled-monument"];
 
 let planningDataDatasetCache = null;
 
@@ -68,6 +68,32 @@ async function fetchJson(url, { timeoutMs = 10000 } = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchPlanningDataEntities(url, { timeoutMs = 10000 } = {}) {
+  const allEntities = [];
+  let nextUrl = url.toString();
+  let totalCount = null;
+  let guard = 0;
+
+  while (nextUrl && guard < 100) {
+    guard += 1;
+    const data = await fetchJson(nextUrl, { timeoutMs });
+    const pageEntities = Array.isArray(data?.entities) ? data.entities : [];
+    allEntities.push(...pageEntities);
+    if (Number.isFinite(Number(data?.count))) {
+      totalCount = Number(data.count);
+    }
+
+    const nextLink = data?.links?.next ? String(data.links.next).trim() : "";
+    if (!nextLink) break;
+    nextUrl = nextLink;
+  }
+
+  return {
+    count: totalCount != null ? totalCount : allEntities.length,
+    entities: allEntities,
+  };
 }
 
 export async function listPlanningDataGeographyDatasets({
@@ -208,6 +234,14 @@ function compactAttributes(attributes) {
   };
 }
 
+function compactFeature(feature, includeGeometry) {
+  const out = compactAttributes(feature?.attributes || {});
+  if (includeGeometry) {
+    out.geometry = feature?.geometry ?? null;
+  }
+  return out;
+}
+
 function dedupeMatches(matches) {
   const seen = new Set();
   const out = [];
@@ -220,7 +254,7 @@ function dedupeMatches(matches) {
   return out;
 }
 
-async function querySingleLayer(layer, pointInput, { apiBaseUrl, timeoutMs, outFields, resultRecordCount }) {
+async function querySingleLayer(layer, pointInput, { apiBaseUrl, timeoutMs, outFields, resultRecordCount, includeGeometry }) {
   const url = new URL(`${normalizeApiBaseUrl(apiBaseUrl)}/${layer.id}/query`);
   url.searchParams.set("where", "1=1");
   url.searchParams.set("geometry", pointInput.geometry);
@@ -228,13 +262,13 @@ async function querySingleLayer(layer, pointInput, { apiBaseUrl, timeoutMs, outF
   url.searchParams.set("inSR", String(pointInput.inSR));
   url.searchParams.set("spatialRel", "esriSpatialRelIntersects");
   url.searchParams.set("outFields", outFields);
-  url.searchParams.set("returnGeometry", "false");
+  url.searchParams.set("returnGeometry", includeGeometry ? "true" : "false");
   url.searchParams.set("resultRecordCount", String(resultRecordCount));
   url.searchParams.set("f", "json");
 
   const data = await fetchJson(url.toString(), { timeoutMs });
   const features = Array.isArray(data?.features) ? data.features : [];
-  const matches = dedupeMatches(features.map((feature) => compactAttributes(feature?.attributes || {})));
+  const matches = dedupeMatches(features.map((feature) => compactFeature(feature, includeGeometry)));
 
   return {
     layerId: layer.id,
@@ -254,6 +288,7 @@ export async function lookupPolicyDesignationsByPoint({
   layerIds = null,
   outFields = DEFAULT_OUT_FIELDS,
   resultRecordCount = 10,
+  includeGeometry = false,
 } = {}) {
   const pointInput = buildPointInput({ lon, lat, easting, northing });
   const allLayers = await listPolicyDesignationLayers({ apiBaseUrl, timeoutMs });
@@ -263,7 +298,7 @@ export async function lookupPolicyDesignationsByPoint({
 
   const results = await Promise.all(
     selectedLayers.map((layer) =>
-      querySingleLayer(layer, pointInput, { apiBaseUrl, timeoutMs, outFields, resultRecordCount }),
+      querySingleLayer(layer, pointInput, { apiBaseUrl, timeoutMs, outFields, resultRecordCount, includeGeometry }),
     ),
   );
 
@@ -280,12 +315,15 @@ export async function lookupPolicyDesignationsByPoint({
   };
 }
 
-function compactPlanningDataEntity(entity) {
-  return {
+function compactPlanningDataEntity(entity, includeGeometry = false) {
+  const out = {
     entity: entity.entity ?? null,
     dataset: entity.dataset ?? null,
     name: entity.name ?? null,
     reference: entity.reference ?? null,
+    listedBuilding: entity["listed-building"] ?? null,
+    listedBuildingName: entity["listed-building-name"] ?? null,
+    listedBuildingGrade: entity["listed-building-grade"] ?? null,
     prefix: entity.prefix ?? null,
     typology: entity.typology ?? null,
     point: entity.point ?? null,
@@ -297,6 +335,10 @@ function compactPlanningDataEntity(entity) {
     notes: entity.notes ?? null,
     organisationEntity: entity["organisation-entity"] ?? null,
   };
+  if (includeGeometry) {
+    out.geometry = entity?.geometry ?? null;
+  }
+  return out;
 }
 
 function parseWktPoint(wkt) {
@@ -359,6 +401,7 @@ export async function lookupPlanningDataDesignations({
   catalogueUrl = DEFAULT_PLANNING_DATA_DATASET_CATALOGUE_URL,
   excludeDatasets = DEFAULT_PLANNING_DATA_EXCLUDED_DATASETS,
   excludePrefixes = DEFAULT_PLANNING_DATA_EXCLUDED_PREFIXES,
+  includeGeometry = false,
 } = {}) {
   const lonNum = lon == null || lon === "" ? null : Number(lon);
   const latNum = lat == null || lat === "" ? null : Number(lat);
@@ -388,8 +431,10 @@ export async function lookupPlanningDataDesignations({
   url.searchParams.set("latitude", String(latNum));
   url.searchParams.set("limit", String(Math.max(1, Number(limit || 50))));
 
-  const data = await fetchJson(url.toString(), { timeoutMs });
-  const entities = Array.isArray(data?.entities) ? data.entities.map(compactPlanningDataEntity) : [];
+  const data = await fetchPlanningDataEntities(url, { timeoutMs });
+  const entities = Array.isArray(data?.entities)
+    ? data.entities.map((entity) => compactPlanningDataEntity(entity, includeGeometry))
+    : [];
 
   return {
     apiUrl,
@@ -409,6 +454,7 @@ export async function lookupNearbyPlanningDataHeritage({
   apiUrl = DEFAULT_PLANNING_DATA_API_URL,
   limit = 100,
   timeoutMs = 10000,
+  includeGeometry = false,
 } = {}) {
   const lonNum = lon == null || lon === "" ? null : Number(lon);
   const latNum = lat == null || lat === "" ? null : Number(lat);
@@ -434,10 +480,32 @@ export async function lookupNearbyPlanningDataHeritage({
   url.searchParams.set("geometry_relation", "intersects");
   url.searchParams.set("limit", String(Math.max(1, Number(limit || 100))));
 
-  const data = await fetchJson(url.toString(), { timeoutMs });
+  const data = await fetchPlanningDataEntities(url, { timeoutMs });
+  const rawEntities = Array.isArray(data?.entities) ? data.entities : [];
+  const listedBuildingByReference = new Map(
+    rawEntities
+      .filter((entity) => entity?.dataset === "listed-building")
+      .map((entity) => [String(entity?.reference ?? "").trim(), entity]),
+  );
   const entities = Array.isArray(data?.entities)
-    ? data.entities
-        .map((entity) => compactNearbyHeritageEntity(entity, lonNum, latNum))
+    ? rawEntities
+        .map((entity) => {
+          if (entity?.dataset !== "listed-building-outline") return entity;
+          const key = String(entity?.["listed-building"] ?? entity?.reference ?? "").trim();
+          const listedBuilding = listedBuildingByReference.get(key);
+          if (!listedBuilding) return entity;
+          return {
+            ...entity,
+            "listed-building-name": listedBuilding?.name ?? entity?.["listed-building-name"] ?? null,
+            "listed-building-grade": listedBuilding?.["listed-building-grade"] ?? entity?.["listed-building-grade"] ?? null,
+            "documentation-url": listedBuilding?.["documentation-url"] ?? entity?.["documentation-url"] ?? null,
+          };
+        })
+        .map((entity) => {
+          const out = compactNearbyHeritageEntity(entity, lonNum, latNum);
+          if (includeGeometry) out.geometry = entity?.geometry ?? null;
+          return out;
+        })
         .sort((a, b) => {
           const aDist = a.distanceMeters == null ? Number.POSITIVE_INFINITY : a.distanceMeters;
           const bDist = b.distanceMeters == null ? Number.POSITIVE_INFINITY : b.distanceMeters;

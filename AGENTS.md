@@ -5,6 +5,16 @@
 - Runtime: Node.js (ES modules)
 - Database: PostgreSQL (`docs_db`) with `pgvector` and PostGIS objects present.
 
+## Deployment Topology
+- `/opt/scraper` and `/var/www/html` are on the HZ server alongside PostgreSQL.
+- `ngist/public_html` is on a different server and is only visible here via an SSH-mounted filesystem.
+- Do not assume PHP pages under `ngist/public_html` can access local HZ-server paths such as `/var/www/html/...` or local loopback-hosted endpoints as if they were on the same machine.
+- When integrating `ngist/public_html` with services under `/var/www/html`, treat them as cross-server calls unless the user explicitly says otherwise.
+
+Server names in current use:
+- `Otso`: the Hetzner/Helsinki server hosting `/opt/scraper`, `/var/www/html`, and PostgreSQL.
+- `Klaus`: the Germany-based box primarily doing scraping work.
+
 ## Environment Variables
 Use `.env` (loaded by `bootstrap.js`) for DB connectivity.
 
@@ -280,6 +290,64 @@ Constraints:
 Indexes:
 - `planning_statement_section_documents_doc_idx` (btree on `doc_id`)
 
+### `policy_document_guidance`
+Purpose: per-policy-document human guidance captured before running policy-unit analysis.
+
+Columns:
+- `doc_id uuid not null` (PK, FK -> `documents.id`)
+- `explanation_text text not null default ''`
+- `custom_prompt_text text not null default ''`
+- `test_page_start integer`
+- `test_page_end integer`
+- `last_test_job_id bigint`
+- `last_execute_job_id bigint`
+- `created_by integer`
+- `updated_by integer`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes:
+- `policy_document_guidance_updated_at_idx` (btree on `updated_at desc`)
+
+### `policy_units`
+Purpose: normalized structured policy blocks extracted from policy documents for cleaner retrieval than raw page chunks.
+
+Columns:
+- `id bigserial` (PK)
+- `doc_id uuid not null` (FK -> `documents.id`)
+- `unit_key text not null`
+- `unit_type text not null`
+- `section_title text`
+- `heading_path_json jsonb not null default '[]'::jsonb`
+- `policy_number text`
+- `policy_title text`
+- `policy_text text`
+- `supporting_text text`
+- `keywords_json jsonb not null default '[]'::jsonb`
+- `topics_json jsonb not null default '[]'::jsonb`
+- `page_start integer`
+- `page_end integer`
+- `prev_unit_id bigint null` (self-FK -> `policy_units.id`)
+- `next_unit_id bigint null` (self-FK -> `policy_units.id`)
+- `source_meta_json jsonb not null default '{}'::jsonb`
+- `unit_vec vector(1536)`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Constraints:
+- `policy_units_pkey` primary key (`id`)
+- unique (`doc_id`, `unit_key`)
+- FK `doc_id` -> `documents.id` on delete cascade
+
+Indexes:
+- `policy_units_doc_id_idx` (btree on `doc_id`)
+- `policy_units_unit_type_idx` (btree on `unit_type`)
+- `policy_units_policy_number_idx` (btree on `policy_number`)
+- `policy_units_page_start_idx` (btree on `doc_id`, `page_start`, `page_end`)
+- `policy_units_heading_path_gin` (GIN on `heading_path_json`)
+- `policy_units_source_meta_gin` (GIN on `source_meta_json`)
+- `policy_units_unit_vec_hnsw` (HNSW on `unit_vec` cosine)
+
 ### `applications`
 Purpose: long-term canonical storage for scraped planning applications (separate from `scrape_jobs`), with a compatibility view for legacy MySQL consumers.
 
@@ -362,6 +430,26 @@ Notes:
 - Current mapping is populated for London borough ONS codes `E09000001` through `E09000033`, corresponding to service ids `1` through `33`.
 - `LLDC` and `OPDC` do not currently have matching rows in `lpa_codes`, so no `datastore_id` values are stored for service ids `34` or `35`.
 
+### `app_ingest_jobs`
+Purpose: MySQL-backed background job tracking used by `ngist` upload, extraction, and worker flows.
+
+Selected columns:
+- `id` (PK)
+- `user_id int null`
+- `kind`
+- `stage`
+- `status`
+- `percentage_complete`
+- `current_action`
+- `final_output`
+- `error_message`
+- `created_at`
+- `updated_at`
+
+Notes:
+- `user_id` was added on March 12, 2026 so jobs can be queried per logged-in user.
+- New job creation helpers in `ngist/public_html/job_logging_library.php` now populate `user_id` from the session where available.
+
 ## Worker/Queue Notes
 - `worker_listen.js` subscribes to PostgreSQL `LISTEN` channel `scrape_job_created`.
 - Notify payload includes: `job_id`, `job_type`, `status`, `ons_code`, `application_ref`.
@@ -374,10 +462,15 @@ Notes:
 - Import `./bootstrap.js` first in scripts that require `.env` variables.
 - If connection drops, listener reconnect logic is required because `LISTEN` state is per-connection.
 
+## Operational Reminders
+- Hetzner `php8.3-fpm` has previously failed with `Result: oom-kill` and stayed down until manually restarted.
+- Periodically remind the user that the systemd unit should be hardened so PHP-FPM auto-restarts after failure, rather than relying on manual notice and restart.
+
 ## Operational Guidance For Agents
 - Treat `documents` as parent entity for `chunks` and `llm_outputs`.
 - Preserve idempotency semantics around `scrape_jobs.idempotency_key`.
 - For `ngist` MySQL planning records (`planit_applications` / `app_combined_nmrk_planit`): treat `status` as decision/outcome text and `app_state` as workflow/state text.
+- For direct MySQL checks against the legacy `ngist` app DB, do not rely on `ngist/public_html/connect.php` if you only need MySQL. That bootstrap also opens Postgres and may fail before MySQL is available. Prefer a minimal PHP snippet that loads `/opt/scraper/ngist/.env`, reads `MYSQL_HOST` / `MYSQL_DB` or `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASS` or `MYSQL_PASSWORD`, and then creates a standalone MySQL PDO connection.
 - For direct DB checks/queries (Postgres/MySQL), proceed when needed; if sandbox networking blocks access, rerun outside sandbox via escalation and request user consent.
 - For vector search changes, keep `vector(1536)` dimension unchanged unless a coordinated embedding migration is planned.
 - Avoid schema mutations without explicit migration scripts and rollback notes.
