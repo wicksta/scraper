@@ -1,0 +1,7 @@
+{
+  "name": "scraper/otso-workers",
+  "type": "project",
+  "require": {
+    "phpoffice/phpword": "^1.4"
+  }
+}

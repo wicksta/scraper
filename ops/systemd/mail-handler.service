@@ -1,0 +1,17 @@
+[Unit]
+Description=Otso Mail Handler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/scraper
+EnvironmentFile=/opt/scraper/.env
+ExecStart=/usr/bin/node /opt/scraper/mail_handler/watch_inbox.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

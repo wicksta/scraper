@@ -1,0 +1,112 @@
+{
+  "replied": {
+    "message-id:<LO0P123MB4923D2CDF6EFDE011D86BBE1C243A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-15T22:46:48.461Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "Hello - Test email",
+      "uid": 2
+    },
+    "message-id:<6BCB3A73-16CF-4F58-A604-090C76519E9B@wickhams.co.uk>": {
+      "replied_at": "2026-03-15T23:10:13.900Z",
+      "from": "james@wickhams.co.uk",
+      "subject": "Note of meeting",
+      "uid": 3
+    },
+    "message-id:<C9E134B8-271F-4F3E-9B59-8AAE78A7ECEF@wickhams.co.uk>": {
+      "replied_at": "2026-03-15T23:17:39.778Z",
+      "from": "james@wickhams.co.uk",
+      "subject": "Note of meeting",
+      "uid": 4,
+      "job_id": 4160,
+      "doc_type": "minutes"
+    },
+    "message-id:<868ED0FA-C434-4E36-BFDB-D06B09971563@wickhams.co.uk>": {
+      "replied_at": "2026-03-15T23:30:55.879Z",
+      "from": "james@wickhams.co.uk",
+      "subject": "Meeting Note",
+      "uid": 5,
+      "job_id": 4161,
+      "doc_type": "minutes"
+    },
+    "message-id:<42975ACB-BBDA-4635-8591-F4B16D2DE277@wickhams.co.uk>": {
+      "replied_at": "2026-03-15T23:44:48.245Z",
+      "from": "james@wickhams.co.uk",
+      "subject": "Birthday Policy Meeting",
+      "uid": 6,
+      "job_id": 4162,
+      "doc_type": "minutes"
+    },
+    "message-id:<6E9B9A25-36B1-4640-B151-B1357085DCB2@wickhams.co.uk>": {
+      "replied_at": "2026-03-15T23:54:52.009Z",
+      "from": "james@wickhams.co.uk",
+      "subject": "Birthday Policy",
+      "uid": 7,
+      "job_id": 4163,
+      "doc_type": "minutes"
+    },
+    "message-id:<LO0P123MB49239D780E9509BF967D4483C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T08:58:24.788Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "Birthday Policy Meeting",
+      "uid": 8,
+      "job_id": 4164,
+      "doc_type": "minutes"
+    },
+    "message-id:<LO0P123MB492396C44C2C3C67A94F3B2BC240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T10:35:31.669Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "Bluesky -Newmark Planning Introduction",
+      "uid": 9,
+      "job_id": 4165,
+      "doc_type": "note"
+    },
+    "message-id:<LO0P123MB49235743D04E92E8911EBFA9C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T10:42:17.893Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "Bluesky - Newmark Planning Introduction",
+      "uid": 10,
+      "job_id": 4166,
+      "doc_type": "minutes"
+    },
+    "message-id:<LO0P123MB49230C84133F6AED48253DF3C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T10:56:36.912Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "FW: Bluesky -Newmark Planning Introduction",
+      "uid": 11,
+      "job_id": 4167,
+      "doc_type": "minutes"
+    },
+    "message-id:<LO0P123MB4923E384C9553DA99A16FF15C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T20:23:41.201Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "22 St James's Square - Initial Planning Issues Note",
+      "uid": 12,
+      "job_id": 4168,
+      "doc_type": "note"
+    },
+    "message-id:<LO0P123MB49231C4DFC0654A1FA401F81C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T20:36:45.848Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "FW: 22 St James's Square - Initial Planning Issues Note",
+      "uid": 13,
+      "job_id": 4169,
+      "doc_type": "note"
+    },
+    "message-id:<LO0P123MB492344B95FE633FA7E611A39C240A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-16T20:49:43.057Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "FW: 22 St James's Square - Initial Planning Issues Note",
+      "uid": 14,
+      "job_id": 4170,
+      "doc_type": "note"
+    },
+    "message-id:<LO0P123MB4923CD4C5D9C73489D9A19FBC241A@LO0P123MB4923.GBRP123.PROD.OUTLOOK.COM>": {
+      "replied_at": "2026-03-17T13:48:00.579Z",
+      "from": "james.wickham@nmrk.com",
+      "subject": "Business Update Meeting",
+      "uid": 15,
+      "job_id": 4172,
+      "doc_type": "note"
+    }
+  }
+}

@@ -22,6 +22,9 @@ const ALLOWED_UNIT_TYPES = new Set([
 ]);
 
 const EXTRACTOR_VERSION = "policy_units_v1";
+const OPENAI_RETRY_ATTEMPTS = 5;
+const OPENAI_RETRY_BASE_DELAY_MS = 1500;
+const OPENAI_RETRY_MAX_DELAY_MS = 15000;
 
 const argv = yargs(hideBin(process.argv))
   .scriptName("extract-policy-units")
@@ -39,6 +42,16 @@ const argv = yargs(hideBin(process.argv))
     type: "string",
     default: "",
     describe: "Optional path to a JSON file containing document-specific extraction guidance.",
+  })
+  .option("page-start", {
+    type: "number",
+    default: 0,
+    describe: "Optional first page to include (1-based). Default uses the full document.",
+  })
+  .option("page-end", {
+    type: "number",
+    default: 0,
+    describe: "Optional last page to include (1-based, inclusive). Default uses the full document.",
   })
   .option("embedding-model", {
     type: "string",
@@ -79,6 +92,11 @@ const argv = yargs(hideBin(process.argv))
     type: "number",
     default: 0,
     describe: "Optional limit on number of extraction windows for debugging (0 = all).",
+  })
+  .option("checkpoint-path", {
+    type: "string",
+    default: "",
+    describe: "Optional path to a JSON checkpoint file used to resume completed extraction windows.",
   })
   .strict()
   .help()
@@ -173,6 +191,7 @@ function cleanList(values, limit = 24) {
 
 function policyCompositeText(unit) {
   return [
+    unit.unit_type === "glossary" && unit.policy_title ? `Glossary term: ${unit.policy_title}` : null,
     unit.policy_number ? `Policy number: ${unit.policy_number}` : null,
     unit.policy_title ? `Policy title: ${unit.policy_title}` : null,
     unit.section_title ? `Section title: ${unit.section_title}` : null,
@@ -230,6 +249,80 @@ function loadGuidanceFile(filePath) {
   return parsed && typeof parsed === "object" ? parsed : null;
 }
 
+function readCheckpoint(filePath) {
+  const path = String(filePath || "").trim();
+  if (!path || !fs.existsSync(path)) return null;
+  try {
+    const raw = fs.readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    logProgress("checkpoint.load_failed", {
+      path,
+      error: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+function writeCheckpoint(filePath, payload) {
+  const path = String(filePath || "").trim();
+  if (!path) return;
+  const tempPath = `${path}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  fs.renameSync(tempPath, path);
+}
+
+function deleteCheckpoint(filePath) {
+  const path = String(filePath || "").trim();
+  if (!path) return;
+  try {
+    if (fs.existsSync(path)) {
+      fs.unlinkSync(path);
+    }
+  } catch (error) {
+    logProgress("checkpoint.delete_failed", {
+      path,
+      error: error?.message || String(error),
+    });
+  }
+}
+
+function checkpointKeyForWindow(window) {
+  return `${Number(window.page_start)}-${Number(window.page_end)}`;
+}
+
+function checkpointMatchesRun(checkpoint, meta) {
+  if (!checkpoint || typeof checkpoint !== "object") return false;
+  return Number(checkpoint.version || 0) === 1
+    && String(checkpoint.doc_id || "") === String(meta.doc_id || "")
+    && String(checkpoint.model || "") === String(meta.model || "")
+    && Number(checkpoint.window_pages || 0) === Number(meta.window_pages || 0)
+    && Number(checkpoint.overlap_pages || 0) === Number(meta.overlap_pages || 0)
+    && Number(checkpoint.page_start || 0) === Number(meta.page_start || 0)
+    && Number(checkpoint.page_end || 0) === Number(meta.page_end || 0);
+}
+
+function checkpointPayload(meta, completedWindows) {
+  return {
+    version: 1,
+    updated_at: new Date().toISOString(),
+    ...meta,
+    completed_windows: completedWindows,
+  };
+}
+
+function parseJsonText(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeGuidance(guidance) {
   if (!guidance || typeof guidance !== "object") return null;
   return {
@@ -244,10 +337,114 @@ function normalizeGuidance(guidance) {
   };
 }
 
+async function fetchGuidanceFromTable(client, docId) {
+  const { rows } = await client.query(
+    `
+      SELECT
+        explanation_text,
+        custom_prompt_text,
+        test_page_start,
+        test_page_end
+      FROM public.policy_document_guidance
+      WHERE doc_id = $1::uuid
+      LIMIT 1
+    `,
+    [docId],
+  );
+  const row = rows[0] || null;
+  if (!row) return null;
+  const parsedPrompt = parseJsonText(row.custom_prompt_text);
+  const normalizedPrompt = normalizeGuidance(parsedPrompt);
+  return {
+    guidance: normalizedPrompt,
+    explanation_text: cleanText(row.explanation_text),
+    test_page_start: Number(row.test_page_start) || null,
+    test_page_end: Number(row.test_page_end) || null,
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(attempt) {
+  const exp = OPENAI_RETRY_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1));
+  const jitter = Math.floor(Math.random() * 500);
+  return Math.min(OPENAI_RETRY_MAX_DELAY_MS, exp + jitter);
+}
+
+function shouldRetryOpenAiError({ status, error }) {
+  if (status === 408 || status === 409 || status === 425 || status === 429) return true;
+  if (status >= 500) return true;
+  if (error) return true;
+  return false;
+}
+
+async function fetchJsonWithRetries(url, options, meta = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= OPENAI_RETRY_ATTEMPTS; attempt += 1) {
+    const startedAt = Date.now();
+    let resp;
+    let bodyText = "";
+    let parsed = null;
+    let fetchError = null;
+
+    try {
+      resp = await fetch(url, options);
+      bodyText = await resp.text();
+      try {
+        parsed = JSON.parse(bodyText);
+      } catch {
+        parsed = null;
+      }
+
+      if (!resp.ok || parsed?.error) {
+        const message = parsed?.error?.message || bodyText.slice(0, 1000) || `HTTP ${resp.status}`;
+        const error = new Error(message);
+        error.status = resp.status;
+        error.payload = parsed;
+        throw error;
+      }
+
+      return {
+        status: resp.status,
+        payload: parsed,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      fetchError = error;
+      const status = Number(error?.status || resp?.status || 0);
+      const retryable = shouldRetryOpenAiError({ status, error });
+      lastError = error;
+
+      if (!retryable || attempt === OPENAI_RETRY_ATTEMPTS) {
+        break;
+      }
+
+      const waitMs = retryDelayMs(attempt);
+      logProgress("openai.retry", {
+        channel: meta.channel || "unknown",
+        model: meta.model || null,
+        attempt,
+        max_attempts: OPENAI_RETRY_ATTEMPTS,
+        status: status || null,
+        wait_ms: waitMs,
+        error: String(error?.message || "Unknown OpenAI fetch error").slice(0, 400),
+      });
+      await sleep(waitMs);
+    }
+  }
+
+  if (lastError?.status) {
+    throw new Error(`${meta.label || "OpenAI API"} error: ${lastError.message}`);
+  }
+  throw new Error(`${meta.label || "OpenAI API"} request failed: ${lastError?.message || "unknown error"}`);
+}
+
 async function responsesJson({ model, systemPrompt, userPrompt }) {
   const apiKey = getOpenAiApiKey();
-  const startedAt = Date.now();
-  const resp = await fetch(`${endpointBase()}/responses`, {
+  const { status, payload, durationMs } = await fetchJsonWithRetries(`${endpointBase()}/responses`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -267,19 +464,11 @@ async function responsesJson({ model, systemPrompt, userPrompt }) {
       ],
       text: { format: { type: "json_object" } },
     }),
+  }, {
+    channel: "responses",
+    model,
+    label: "Responses API",
   });
-
-  const bodyText = await resp.text();
-  let payload = null;
-  try {
-    payload = JSON.parse(bodyText);
-  } catch {
-    payload = null;
-  }
-  if (!resp.ok || payload?.error) {
-    const message = payload?.error?.message || bodyText.slice(0, 1000) || `HTTP ${resp.status}`;
-    throw new Error(`Responses API error: ${message}`);
-  }
 
   const text = responseText(payload);
   const parsed = parseLooseJson(text);
@@ -288,8 +477,8 @@ async function responsesJson({ model, systemPrompt, userPrompt }) {
   }
   logProgress("responses.completed", {
     model,
-    status: resp.status,
-    duration_ms: Date.now() - startedAt,
+    status,
+    duration_ms: durationMs,
     output_chars: text.length,
   });
   return parsed;
@@ -309,8 +498,7 @@ async function embedTexts(inputs, { model, batchSize, maxCharsPerEmbed }) {
       batch_count: batchCount,
       items: batch.length,
     });
-    const startedAt = Date.now();
-    const resp = await fetch(`${endpointBase()}/embeddings`, {
+    const { payload, durationMs } = await fetchJsonWithRetries(`${endpointBase()}/embeddings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -320,18 +508,11 @@ async function embedTexts(inputs, { model, batchSize, maxCharsPerEmbed }) {
         model,
         input: batch,
       }),
+    }, {
+      channel: "embeddings",
+      model,
+      label: "Embeddings API",
     });
-    const bodyText = await resp.text();
-    let payload = null;
-    try {
-      payload = JSON.parse(bodyText);
-    } catch {
-      payload = null;
-    }
-    if (!resp.ok || payload?.error) {
-      const message = payload?.error?.message || bodyText.slice(0, 1000) || `HTTP ${resp.status}`;
-      throw new Error(`Embeddings API error: ${message}`);
-    }
     for (const row of Array.isArray(payload?.data) ? payload.data : []) {
       out.push(Array.isArray(row?.embedding) ? row.embedding.map((x) => Number(x)) : null);
     }
@@ -340,7 +521,7 @@ async function embedTexts(inputs, { model, batchSize, maxCharsPerEmbed }) {
       batch_no: batchNo,
       batch_count: batchCount,
       items: batch.length,
-      duration_ms: Date.now() - startedAt,
+      duration_ms: durationMs,
     });
   }
   return out;
@@ -442,6 +623,17 @@ function buildWindows(pages, windowPages, overlapPages, limitWindows = 0) {
   return windows;
 }
 
+function filterPagesByRange(pages, pageStart, pageEnd) {
+  const start = Number(pageStart) || 0;
+  const end = Number(pageEnd) || 0;
+  if (start <= 0 && end <= 0) {
+    return pages;
+  }
+  const minPage = start > 0 ? start : 1;
+  const maxPage = end > 0 ? end : Number.MAX_SAFE_INTEGER;
+  return pages.filter((page) => page.page >= minPage && page.page <= maxPage);
+}
+
 function extractionSystemPrompt() {
   return [
     "You extract structured units from UK planning policy documents.",
@@ -452,6 +644,8 @@ function extractionSystemPrompt() {
     "Classify units using only this vocabulary: policy_core, supporting_text, section_intro, glossary, contents_navigation, appendix_schedule, site_allocation, front_matter, unknown.",
     "If a numbered or named policy is visible, prefer a single policy_core unit for it.",
     "Use supporting_text only for explanatory text attached to that policy or section.",
+    "For glossary entries, treat the defined word or phrase as one object and its definition as the associated text.",
+    "For glossary units, put the term in glossary_term and the definition in glossary_definition. Also set policy_title to the term if possible.",
     "Ignore page furniture unless it helps identify the structure.",
     "Return strict JSON only as {\"units\": [...]}."
   ].join("\n");
@@ -489,12 +683,15 @@ function extractionUserPrompt(doc, window, guidance) {
     "- policy_title",
     "- policy_text",
     "- supporting_text",
+    "- glossary_term (for glossary units)",
+    "- glossary_definition (for glossary units)",
     "- keywords (array)",
     "- topics (array)",
     "- page_start",
     "- page_end",
     "Prefer fewer, coherent units over fragmented paragraph-level output.",
     "If the text is clearly contents/foreword/glossary/appendix material, classify it accordingly.",
+    "If unit_type is glossary, keep one word/phrase plus its definition together as a single unit instead of splitting them apart.",
     ...guidanceLines,
     "",
     pageText,
@@ -506,19 +703,33 @@ function normalizeExtractedUnit(raw, window) {
   const unitType = ALLOWED_UNIT_TYPES.has(String(raw?.unit_type || "").trim())
     ? String(raw.unit_type).trim()
     : "unknown";
+  const glossaryTerm = cleanText(raw?.glossary_term);
+  const glossaryDefinition = cleanText(raw?.glossary_definition);
   const policyText = cleanText(raw?.policy_text);
   const supportingText = cleanText(raw?.supporting_text);
   const fallbackBody = cleanText(raw?.content);
   const pageStart = Number.isFinite(Number(raw?.page_start)) ? Number(raw.page_start) : window.page_start;
   const pageEnd = Number.isFinite(Number(raw?.page_end)) ? Number(raw.page_end) : window.page_end;
+  const normalizedPolicyTitle = cleanText(raw?.policy_title);
+  const normalizedSectionTitle = cleanText(raw?.section_title);
+  const normalizedPolicyText = unitType === "glossary"
+    ? null
+    : (policyText || (unitType === "policy_core" ? fallbackBody : null));
+  const normalizedSupportingText = unitType === "glossary"
+    ? (glossaryDefinition || supportingText || fallbackBody)
+    : (supportingText || (unitType !== "policy_core" ? fallbackBody : null));
   const normalized = {
     unit_type: unitType,
-    section_title: cleanText(raw?.section_title),
+    section_title: unitType === "glossary"
+      ? (normalizedSectionTitle || "Glossary")
+      : normalizedSectionTitle,
     heading_path_json: headingPath,
     policy_number: cleanText(raw?.policy_number),
-    policy_title: cleanText(raw?.policy_title),
-    policy_text: policyText || (unitType === "policy_core" ? fallbackBody : null),
-    supporting_text: supportingText || (unitType !== "policy_core" ? fallbackBody : null),
+    policy_title: unitType === "glossary"
+      ? (glossaryTerm || normalizedPolicyTitle)
+      : normalizedPolicyTitle,
+    policy_text: normalizedPolicyText,
+    supporting_text: normalizedSupportingText,
     keywords_json: cleanList(raw?.keywords ?? [], 20),
     topics_json: cleanList(raw?.topics ?? [], 16),
     page_start: Math.max(window.page_start, Math.min(pageStart, pageEnd)),
@@ -527,6 +738,7 @@ function normalizeExtractedUnit(raw, window) {
       extraction_window_index: window.index,
       extraction_window_pages: [window.page_start, window.page_end],
       raw_unit_type: cleanText(raw?.unit_type),
+      glossary_term: unitType === "glossary" ? glossaryTerm : null,
     },
   };
 
@@ -544,7 +756,184 @@ function appendUniqueText(a, b) {
   if (left === right) return left;
   if (left.includes(right)) return left;
   if (right.includes(left)) return right;
-  return `${left}\n\n${right}`;
+
+  const leftNorm = normalizeTextForCompare(left);
+  const rightNorm = normalizeTextForCompare(right);
+  if (leftNorm.includes(rightNorm)) return left;
+  if (rightNorm.includes(leftNorm)) return right;
+
+  const leftSegments = splitTextSegments(left);
+  const rightSegments = splitTextSegments(right);
+  const overlap = findSegmentOverlap(leftSegments, rightSegments);
+  const combined = dedupeSegments([
+    ...leftSegments,
+    ...rightSegments.slice(overlap),
+  ]);
+  return joinSegments(combined);
+}
+
+function normalizeTextForCompare(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[\-\u2022]\s*/gm, "")
+    .trim();
+}
+
+function splitTextSegments(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+
+  let segments = raw
+    .split(/\n{2,}/)
+    .map((part) => cleanText(part))
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    segments = raw
+      .replace(/\n+/g, " ")
+      .split(/(?<=[.!?])\s+(?=(?:[A-Z0-9]|- The Council|\d+\.) )/u)
+      .map((part) => cleanText(part))
+      .filter(Boolean);
+  }
+
+  return segments.length ? segments : [raw];
+}
+
+function findSegmentOverlap(leftSegments, rightSegments) {
+  const max = Math.min(leftSegments.length, rightSegments.length);
+  for (let size = max; size > 0; size -= 1) {
+    let matches = true;
+    for (let i = 0; i < size; i += 1) {
+      const leftNorm = normalizeTextForCompare(leftSegments[leftSegments.length - size + i]);
+      const rightNorm = normalizeTextForCompare(rightSegments[i]);
+      if (leftNorm !== rightNorm) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      return size;
+    }
+  }
+  return 0;
+}
+
+function dedupeSegments(segments) {
+  const out = [];
+  const seen = new Set();
+  for (const segment of segments) {
+    const text = cleanText(segment);
+    if (!text) continue;
+    const normalized = normalizeTextForCompare(text);
+    if (!normalized) continue;
+
+    let duplicate = false;
+    for (const existing of out) {
+      const existingNorm = normalizeTextForCompare(existing);
+      if (existingNorm === normalized || existingNorm.includes(normalized) || normalized.includes(existingNorm)) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(text);
+  }
+  return out;
+}
+
+function joinSegments(segments) {
+  return segments
+    .map((segment) => cleanText(segment))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function unitComparableTitle(unit) {
+  return cleanText(unit.policy_title || unit.section_title || unit.policy_number || unit.unit_key || "");
+}
+
+function unitComparableBody(unit) {
+  return cleanText([
+    unit.policy_text || "",
+    unit.supporting_text || "",
+  ].filter(Boolean).join("\n\n"));
+}
+
+function normalizedWordCount(text) {
+  const parts = normalizeTextForCompare(text).split(/\s+/).filter(Boolean);
+  return parts.length;
+}
+
+function unitsAreComparableForContainment(a, b) {
+  if (String(a.unit_type || "") !== String(b.unit_type || "")) {
+    return false;
+  }
+
+  const aPolicyNumber = cleanText(a.policy_number);
+  const bPolicyNumber = cleanText(b.policy_number);
+  if (aPolicyNumber || bPolicyNumber) {
+    return aPolicyNumber !== null && aPolicyNumber === bPolicyNumber;
+  }
+
+  const aTitle = normalizeTextForCompare(unitComparableTitle(a));
+  const bTitle = normalizeTextForCompare(unitComparableTitle(b));
+  if (aTitle && bTitle) {
+    return aTitle === bTitle || aTitle.includes(bTitle) || bTitle.includes(aTitle);
+  }
+
+  return true;
+}
+
+function unitPageRangesOverlapOrTouch(a, b, slackPages = 1) {
+  const aStart = Number(a.page_start ?? 0) || 0;
+  const aEnd = Number(a.page_end ?? aStart) || aStart;
+  const bStart = Number(b.page_start ?? 0) || 0;
+  const bEnd = Number(b.page_end ?? bStart) || bStart;
+  return aStart <= (bEnd + slackPages) && bStart <= (aEnd + slackPages);
+}
+
+function pruneContainedUnits(units) {
+  return units.filter((unit, index) => {
+    const unitBody = unitComparableBody(unit);
+    if (!unitBody) {
+      return true;
+    }
+    const unitNorm = normalizeTextForCompare(unitBody);
+    const unitWords = normalizedWordCount(unitBody);
+    if (unitWords < 8) {
+      return true;
+    }
+
+    for (let i = 0; i < units.length; i += 1) {
+      if (i === index) continue;
+      const other = units[i];
+      if (!unitsAreComparableForContainment(unit, other)) {
+        continue;
+      }
+      if (!unitPageRangesOverlapOrTouch(unit, other, 2)) {
+        continue;
+      }
+      const otherBody = unitComparableBody(other);
+      if (!otherBody) continue;
+      const otherWords = normalizedWordCount(otherBody);
+      if (otherWords <= unitWords) {
+        continue;
+      }
+      const otherNorm = normalizeTextForCompare(otherBody);
+      if (!otherNorm.includes(unitNorm)) {
+        continue;
+      }
+      if (otherWords < Math.max(unitWords + 12, Math.floor(unitWords * 1.35))) {
+        continue;
+      }
+      return false;
+    }
+    return true;
+  });
 }
 
 function mergePolicyCoreUnits(units) {
@@ -614,10 +1003,10 @@ function mergePolicyCoreUnits(units) {
     }
   }
 
-  const merged = [
+  const merged = pruneContainedUnits([
     ...Array.from(policyMap.values()),
     ...Array.from(miscMap.values()),
-  ];
+  ]);
 
   merged.sort((a, b) => {
     const pageCmp = Number(a.page_start ?? 0) - Number(b.page_start ?? 0);
@@ -787,13 +1176,15 @@ async function main() {
     }
 
     const fileGuidance = normalizeGuidance(argv.guidanceFile ? loadGuidanceFile(argv.guidanceFile) : null);
+    const tableGuidanceRow = await fetchGuidanceFromTable(client, argv.docId);
+    const tableGuidance = tableGuidanceRow?.guidance || null;
     const docMetaGuidance = normalizeGuidance(doc.meta?.policy_extraction_guidance || null);
-    const guidance = fileGuidance || docMetaGuidance;
+    const guidance = fileGuidance || tableGuidance || docMetaGuidance;
     logProgress("document.loaded", {
       doc_id: argv.docId,
       title: doc.title || null,
       guidance_applied: Boolean(guidance),
-      guidance_source: fileGuidance ? "file" : (docMetaGuidance ? "documents.meta" : null),
+      guidance_source: fileGuidance ? "file" : (tableGuidance ? "policy_document_guidance" : (docMetaGuidance ? "documents.meta" : null)),
     });
 
     let pages = await fetchPageChunks(client, argv.docId);
@@ -804,16 +1195,72 @@ async function main() {
       throw new Error("No page text available for policy extraction");
     }
 
-    const windows = buildWindows(pages, argv.windowPages, argv.overlapPages, argv.limitWindows);
+    const filteredPages = filterPagesByRange(pages, argv.pageStart, argv.pageEnd);
+    if (!filteredPages.length) {
+      throw new Error(`No pages available in requested range ${argv.pageStart || "start"}-${argv.pageEnd || "end"}`);
+    }
+
+    const windows = buildWindows(filteredPages, argv.windowPages, argv.overlapPages, argv.limitWindows);
     logProgress("windows.built", {
       doc_id: argv.docId,
-      pages: pages.length,
+      pages: filteredPages.length,
+      pages_total: pages.length,
       windows: windows.length,
       window_pages: argv.windowPages,
       overlap_pages: argv.overlapPages,
+      page_start: argv.pageStart || null,
+      page_end: argv.pageEnd || null,
     });
+    const checkpointPath = cleanText(argv.checkpointPath);
+    const checkpointMeta = {
+      doc_id: argv.docId,
+      model: argv.model,
+      window_pages: Number(argv.windowPages) || 4,
+      overlap_pages: Number(argv.overlapPages) || 0,
+      page_start: Number(argv.pageStart) || 0,
+      page_end: Number(argv.pageEnd) || 0,
+    };
+    const checkpoint = readCheckpoint(checkpointPath);
+    const resumedWindows = checkpointMatchesRun(checkpoint, checkpointMeta)
+      ? (Array.isArray(checkpoint.completed_windows) ? checkpoint.completed_windows : [])
+      : [];
+    const resumedMap = new Map(
+      resumedWindows
+        .filter((entry) => entry && typeof entry === "object" && entry.window_key)
+        .map((entry) => [String(entry.window_key), entry]),
+    );
+    if (checkpointPath) {
+      logProgress("checkpoint.ready", {
+        path: checkpointPath,
+        resumed_windows: resumedMap.size,
+      });
+    }
     const extracted = [];
+    const completedWindows = [];
     for (const [index, window] of windows.entries()) {
+      const windowKey = checkpointKeyForWindow(window);
+      const resumed = resumedMap.get(windowKey);
+      if (resumed) {
+        const resumedUnits = Array.isArray(resumed.units) ? resumed.units : [];
+        extracted.push(...resumedUnits);
+        completedWindows.push({
+          window_key: windowKey,
+          window_no: index + 1,
+          page_start: window.page_start,
+          page_end: window.page_end,
+          units: resumedUnits,
+        });
+        logProgress("window.resumed", {
+          doc_id: argv.docId,
+          window_no: index + 1,
+          window_count: windows.length,
+          page_start: window.page_start,
+          page_end: window.page_end,
+          units_accepted: resumedUnits.length,
+        });
+        continue;
+      }
+
       logProgress("window.start", {
         doc_id: argv.docId,
         window_no: index + 1,
@@ -828,12 +1275,24 @@ async function main() {
       });
       const units = Array.isArray(payload?.units) ? payload.units : [];
       let accepted = 0;
+      const acceptedUnits = [];
       for (const rawUnit of units) {
         const unit = normalizeExtractedUnit(rawUnit, window);
         if (unit) {
           extracted.push(unit);
+          acceptedUnits.push(unit);
           accepted += 1;
         }
+      }
+      completedWindows.push({
+        window_key: windowKey,
+        window_no: index + 1,
+        page_start: window.page_start,
+        page_end: window.page_end,
+        units: acceptedUnits,
+      });
+      if (checkpointPath) {
+        writeCheckpoint(checkpointPath, checkpointPayload(checkpointMeta, completedWindows));
       }
       logProgress("window.completed", {
         doc_id: argv.docId,
@@ -848,15 +1307,16 @@ async function main() {
 
     const mergedUnits = mergePolicyCoreUnits(extracted).map((unit) => ({
       ...unit,
-      source_meta_json: {
-        ...(unit.source_meta_json || {}),
-        extractor_version: EXTRACTOR_VERSION,
-        extraction_model: argv.model,
-        doc_title: doc.title || null,
-        guidance_file: cleanText(argv.guidanceFile),
-        guidance_applied: Boolean(guidance),
-      },
-    }));
+        source_meta_json: {
+          ...(unit.source_meta_json || {}),
+          extractor_version: EXTRACTOR_VERSION,
+          extraction_model: argv.model,
+          doc_title: doc.title || null,
+          guidance_file: cleanText(argv.guidanceFile),
+          guidance_applied: Boolean(guidance),
+          guidance_explanation_text: tableGuidanceRow?.explanation_text || null,
+        },
+      }));
     logProgress("merge.completed", {
       doc_id: argv.docId,
       extracted_units_raw: extracted.length,
@@ -882,12 +1342,14 @@ async function main() {
       stored_units: stored,
       apply: Boolean(argv.apply),
     });
+    deleteCheckpoint(checkpointPath);
 
     process.stdout.write(`${JSON.stringify({
       success: true,
       doc_id: argv.docId,
       doc_title: doc.title || null,
-      pages: pages.length,
+      pages: filteredPages.length,
+      pages_total: pages.length,
       windows: windows.length,
       extracted_units_raw: extracted.length,
       units_final: mergedUnits.length,
@@ -895,7 +1357,9 @@ async function main() {
       apply: Boolean(argv.apply),
       embed: Boolean(argv.embed),
       guidance_applied: Boolean(guidance),
-      guidance_source: fileGuidance ? "file" : (docMetaGuidance ? "documents.meta" : null),
+      guidance_source: fileGuidance ? "file" : (tableGuidance ? "policy_document_guidance" : (docMetaGuidance ? "documents.meta" : null)),
+      page_start: argv.pageStart || null,
+      page_end: argv.pageEnd || null,
       extractor_version: EXTRACTOR_VERSION,
       model: argv.model,
       embedding_model: argv.embeddingModel,
@@ -907,6 +1371,12 @@ async function main() {
         section_title: unit.section_title,
         page_start: unit.page_start,
         page_end: unit.page_end,
+        policy_text: unit.policy_text,
+        supporting_text: unit.supporting_text,
+        heading_path: unit.heading_path_json || [],
+        keywords: unit.keywords_json || [],
+        topics: unit.topics_json || [],
+        source_meta: unit.source_meta_json || {},
       })),
     }, null, 2)}\n`);
   } finally {

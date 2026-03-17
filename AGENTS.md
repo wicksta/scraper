@@ -348,6 +348,35 @@ Indexes:
 - `policy_units_source_meta_gin` (GIN on `source_meta_json`)
 - `policy_units_unit_vec_hnsw` (HNSW on `unit_vec` cosine)
 
+### `policy_chapters`
+Purpose: top-level chapter segmentation for policy documents, separate from finer-grained `policy_units`.
+
+Columns:
+- `id bigserial` (PK)
+- `doc_id uuid not null` (FK -> `documents.id`)
+- `chapter_key text not null`
+- `chapter_order integer not null`
+- `chapter_number text`
+- `chapter_title text not null`
+- `chapter_text text`
+- `page_start integer not null`
+- `page_end integer not null`
+- `heading_path_json jsonb not null default '[]'::jsonb`
+- `source_meta_json jsonb not null default '{}'::jsonb`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Constraints:
+- `policy_chapters_pkey` primary key (`id`)
+- unique (`doc_id`, `chapter_key`)
+- FK `doc_id` -> `documents.id` on delete cascade
+
+Indexes:
+- `policy_chapters_doc_order_idx` (btree on `doc_id`, `chapter_order`)
+- `policy_chapters_doc_page_idx` (btree on `doc_id`, `page_start`, `page_end`)
+- `policy_chapters_heading_path_gin` (GIN on `heading_path_json`)
+- `policy_chapters_source_meta_gin` (GIN on `source_meta_json`)
+
 ### `applications`
 Purpose: long-term canonical storage for scraped planning applications (separate from `scrape_jobs`), with a compatibility view for legacy MySQL consumers.
 
