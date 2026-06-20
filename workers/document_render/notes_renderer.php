@@ -102,6 +102,40 @@ function note_renderer_normalize_result(array $decoded): array {
         }
 
         $typeRaw = strtolower(trim((string)($block['type'] ?? '')));
+        if ($typeRaw === 'table') {
+            $header = [];
+            $headerRaw = is_array($block['header'] ?? null) ? $block['header'] : [];
+            foreach ($headerRaw as $cell) {
+                $header[] = note_renderer_safe_text((string)$cell);
+            }
+
+            $rows = [];
+            $rowsRaw = is_array($block['rows'] ?? null) ? $block['rows'] : [];
+            foreach ($rowsRaw as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $normalizedRow = [];
+                foreach ($row as $cell) {
+                    $normalizedRow[] = note_renderer_safe_text((string)$cell);
+                }
+                if (count(array_filter($normalizedRow, static fn(string $cell): bool => $cell !== '')) > 0) {
+                    $rows[] = $normalizedRow;
+                }
+            }
+
+            if (count($header) === 0 && count($rows) === 0) {
+                continue;
+            }
+
+            $normalizedBlocks[] = [
+                'type' => 'table',
+                'header' => $header,
+                'rows' => $rows,
+            ];
+            continue;
+        }
+
         $text = note_renderer_safe_text((string)($block['text'] ?? ''));
         $tagType = note_renderer_extract_structural_tag_type($text);
         $text = note_renderer_strip_structural_tag_prefix($text);
@@ -194,28 +228,189 @@ function note_renderer_paragraph_text_content(DOMElement $paragraph, DOMXPath $x
 function note_renderer_build_paragraph_xml(string $text, string $styleId): string {
     $styleSafe = htmlspecialchars($styleId, ENT_XML1 | ENT_QUOTES, 'UTF-8');
     $lineParts = preg_split('/\R/u', $text) ?: [$text];
+    $runInner = note_renderer_build_inline_runs_xml($lineParts);
+
+    return '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        . '<w:pPr><w:pStyle w:val="' . $styleSafe . '"/></w:pPr>'
+        . $runInner
+        . '</w:p>';
+}
+
+function note_renderer_build_text_run_xml(string $text, bool $isBold = false): string {
+    $textSafe = htmlspecialchars($text, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+    $runPr = $isBold ? '<w:rPr><w:b/></w:rPr>' : '';
+    if ($textSafe === '') {
+        $textSafe = ' ';
+    }
+
+    return '<w:r>' . $runPr . '<w:t xml:space="preserve">' . $textSafe . '</w:t></w:r>';
+}
+
+function note_renderer_parse_inline_bold_segments(string $line): array {
+    $segments = [];
+    $offset = 0;
+    $pattern = '/\*\*(.+?)\*\*/u';
+
+    if (!preg_match_all($pattern, $line, $matches, PREG_OFFSET_CAPTURE)) {
+        return [['text' => $line, 'bold' => false]];
+    }
+
+    foreach ($matches[0] as $idx => $fullMatch) {
+        $fullText = (string)$fullMatch[0];
+        $fullOffset = (int)$fullMatch[1];
+        $innerText = (string)($matches[1][$idx][0] ?? '');
+
+        if ($fullOffset > $offset) {
+            $segments[] = [
+                'text' => substr($line, $offset, $fullOffset - $offset),
+                'bold' => false,
+            ];
+        }
+
+        $segments[] = [
+            'text' => $innerText,
+            'bold' => true,
+        ];
+
+        $offset = $fullOffset + strlen($fullText);
+    }
+
+    if ($offset < strlen($line)) {
+        $segments[] = [
+            'text' => substr($line, $offset),
+            'bold' => false,
+        ];
+    }
+
+    if (count($segments) === 0) {
+        $segments[] = ['text' => $line, 'bold' => false];
+    }
+
+    return $segments;
+}
+
+function note_renderer_build_inline_runs_xml(array $lineParts, bool $defaultBold = false): string {
     $runInner = '';
     foreach ($lineParts as $idx => $line) {
         if ($idx > 0) {
-            $runInner .= '<w:br/>';
+            $runInner .= '<w:r><w:br/></w:r>';
         }
 
-        $lineSafe = htmlspecialchars((string)$line, ENT_XML1 | ENT_QUOTES, 'UTF-8');
-        if ($lineSafe === '') {
-            $runInner .= '<w:t xml:space="preserve"> </w:t>';
-        } else {
-            $runInner .= '<w:t xml:space="preserve">' . $lineSafe . '</w:t>';
+        $segments = note_renderer_parse_inline_bold_segments((string)$line);
+        foreach ($segments as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            $segmentText = (string)($segment['text'] ?? '');
+            $isBold = $defaultBold || (bool)($segment['bold'] ?? false);
+            $runInner .= note_renderer_build_text_run_xml($segmentText, $isBold);
         }
     }
 
     if ($runInner === '') {
-        $runInner = '<w:t xml:space="preserve"> </w:t>';
+        $runInner = note_renderer_build_text_run_xml(' ', $defaultBold);
     }
 
-    return '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        . '<w:pPr><w:pStyle w:val="' . $styleSafe . '"/></w:pPr>'
-        . '<w:r>' . $runInner . '</w:r>'
-        . '</w:p>';
+    return $runInner;
+}
+
+function note_renderer_build_table_cell_xml(string $text, int $widthTwips, bool $isHeader): string {
+    $widthSafe = max(240, $widthTwips);
+    $textSafe = note_renderer_safe_text($text);
+    $lineParts = preg_split('/\R/u', $textSafe) ?: [$textSafe];
+    $runInner = note_renderer_build_inline_runs_xml($lineParts, $isHeader);
+
+    $cellPr = '<w:tcPr>'
+        . '<w:tcW w:w="' . $widthSafe . '" w:type="dxa"/>'
+        . '<w:shd w:val="clear" w:color="auto" w:fill="' . ($isHeader ? 'D9D9D9' : 'FFFFFF') . '"/>'
+        . '<w:vAlign w:val="center"/>'
+        . '</w:tcPr>';
+
+    $paragraphPr = '<w:pPr>'
+        . '<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>'
+        . '</w:pPr>';
+
+    return '<w:tc>'
+        . $cellPr
+        . '<w:p>'
+        . $paragraphPr
+        . $runInner
+        . '</w:p>'
+        . '</w:tc>';
+}
+
+function note_renderer_build_table_xml(array $header, array $rows): string {
+    $allRows = [];
+    if (count($header) > 0) {
+        $allRows[] = ['cells' => $header, 'is_header' => true];
+    }
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $allRows[] = ['cells' => $row, 'is_header' => false];
+    }
+
+    if (count($allRows) === 0) {
+        return '';
+    }
+
+    $columnCount = 0;
+    foreach ($allRows as $row) {
+        $columnCount = max($columnCount, count($row['cells']));
+    }
+    if ($columnCount <= 0) {
+        return '';
+    }
+
+    $usableWidthTwips = 8788;
+    $cellWidthTwips = (int)max(900, floor($usableWidthTwips / $columnCount));
+
+    $gridXml = '';
+    for ($i = 0; $i < $columnCount; $i++) {
+        $gridXml .= '<w:gridCol w:w="' . $cellWidthTwips . '"/>';
+    }
+
+    $rowsXml = '';
+    foreach ($allRows as $row) {
+        $cells = $row['cells'];
+        while (count($cells) < $columnCount) {
+            $cells[] = '';
+        }
+
+        $rowXml = '';
+        foreach ($cells as $cell) {
+            $rowXml .= note_renderer_build_table_cell_xml((string)$cell, $cellWidthTwips, (bool)$row['is_header']);
+        }
+
+        $trPr = $row['is_header'] ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
+        $rowsXml .= '<w:tr>' . $trPr . $rowXml . '</w:tr>';
+    }
+
+    return '<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        . '<w:tblPr>'
+        . '<w:tblW w:w="' . $usableWidthTwips . '" w:type="dxa"/>'
+        . '<w:tblLayout w:type="fixed"/>'
+        . '<w:tblInd w:w="1134" w:type="dxa"/>'
+        . '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
+        . '<w:tblBorders>'
+        . '<w:top w:val="single" w:sz="8" w:space="0" w:color="C0C0C0"/>'
+        . '<w:left w:val="single" w:sz="8" w:space="0" w:color="C0C0C0"/>'
+        . '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="C0C0C0"/>'
+        . '<w:right w:val="single" w:sz="8" w:space="0" w:color="C0C0C0"/>'
+        . '<w:insideH w:val="single" w:sz="6" w:space="0" w:color="D9D9D9"/>'
+        . '<w:insideV w:val="single" w:sz="6" w:space="0" w:color="D9D9D9"/>'
+        . '</w:tblBorders>'
+        . '<w:tblCellMar>'
+        . '<w:top w:w="80" w:type="dxa"/>'
+        . '<w:left w:w="90" w:type="dxa"/>'
+        . '<w:bottom w:w="80" w:type="dxa"/>'
+        . '<w:right w:w="90" w:type="dxa"/>'
+        . '</w:tblCellMar>'
+        . '</w:tblPr>'
+        . '<w:tblGrid>' . $gridXml . '</w:tblGrid>'
+        . $rowsXml
+        . '</w:tbl>';
 }
 
 function note_renderer_inject_blocks(string $docxPath, string $marker, array $blocks): void {
@@ -270,27 +465,37 @@ function note_renderer_inject_blocks(string $docxPath, string $marker, array $bl
             'quote' => 'Quote',
         ];
 
-        $paragraphXml = '';
+        $blockXml = '';
         foreach ($blocks as $block) {
             if (!is_array($block)) {
                 continue;
             }
 
             $typeRaw = strtolower(trim((string)($block['type'] ?? 'paragraph')));
+            if ($typeRaw === 'table') {
+                $header = is_array($block['header'] ?? null) ? $block['header'] : [];
+                $rows = is_array($block['rows'] ?? null) ? $block['rows'] : [];
+                $tableXml = note_renderer_build_table_xml($header, $rows);
+                if ($tableXml !== '') {
+                    $blockXml .= $tableXml;
+                }
+                continue;
+            }
+
             $type = array_key_exists($typeRaw, $styleMap) ? $typeRaw : 'paragraph';
             $text = note_renderer_safe_text((string)($block['text'] ?? ''));
             if ($text === '') {
                 continue;
             }
 
-            $paragraphXml .= note_renderer_build_paragraph_xml($text, $styleMap[$type]);
+            $blockXml .= note_renderer_build_paragraph_xml($text, $styleMap[$type]);
         }
-        if ($paragraphXml === '') {
-            $paragraphXml = note_renderer_build_paragraph_xml('', $styleMap['paragraph']);
+        if ($blockXml === '') {
+            $blockXml = note_renderer_build_paragraph_xml('', $styleMap['paragraph']);
         }
 
         $fragment = $dom->createDocumentFragment();
-        if (!$fragment->appendXML($paragraphXml)) {
+        if (!$fragment->appendXML($blockXml)) {
             throw new RuntimeException('Could not construct generated note paragraphs.');
         }
 

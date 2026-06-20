@@ -10,7 +10,7 @@ WITH src AS (
       COALESCE(agent_name, '')
     )) AS txt
   FROM public.applications
-  WHERE ons_code = 'E09000033'
+  WHERE ons_code = 'E09000001'
 ),
 tagged AS (
   SELECT
@@ -26,7 +26,9 @@ tagged AS (
       WHEN txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
       WHEN txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
-      WHEN txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN txt ~* '\m(avison young)\M' THEN 'Avison Young'
+      WHEN txt ~* '\m(daniel watney)\M' THEN 'Daniel Watney'
+      WHEN txt ~* '\m(iceni projects|iceni)\M' THEN 'Iceni Projects'
       WHEN txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent
@@ -70,7 +72,7 @@ payload AS (
   FROM ranked
 )
 INSERT INTO public.query_cache (cache_key, generated_at, ttl_seconds, payload)
-SELECT 'top_agents', now(), 86400, payload.j
+SELECT 'city_top_agents', now(), 86400, payload.j
 FROM payload
 ON CONFLICT (cache_key)
 DO UPDATE SET generated_at = EXCLUDED.generated_at,

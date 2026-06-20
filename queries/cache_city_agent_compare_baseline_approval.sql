@@ -1,12 +1,13 @@
 WITH typed AS (
   SELECT
     CASE
-      WHEN reference ~* '/ADFULL$' THEN 'ADFULL'
-      WHEN reference ~* '/ADLBC$'  THEN 'ADLBC'
-      WHEN reference ~* '/FULL$'   AND major = 'Major' THEN 'FULL (Major)'
-      WHEN reference ~* '/FULL$'   THEN 'FULL (Non-Major)'
+      WHEN reference ~* '/FULL$'   THEN 'FULL'
+      WHEN reference ~* '/FULMAJ$' THEN 'FULMAJ'
+      WHEN reference ~* '/FULEIA$' THEN 'FULEIA'
       WHEN reference ~* '/LBC$'    THEN 'LBC'
-      WHEN reference ~* '/ADV$'    THEN 'ADV'
+      WHEN reference ~* '/ADVT$'   THEN 'ADVT'
+      WHEN reference ~* '/MDC$'    THEN 'MDC'
+      WHEN reference ~* '/LDC$'    THEN 'LDC'
       ELSE NULL
     END AS app_type,
     CASE
@@ -17,7 +18,9 @@ WITH typed AS (
       WHEN txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
       WHEN txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
-      WHEN txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN txt ~* '\m(avison young)\M' THEN 'Avison Young'
+      WHEN txt ~* '\m(daniel watney)\M' THEN 'Daniel Watney'
+      WHEN txt ~* '\m(iceni projects|iceni)\M' THEN 'Iceni Projects'
       WHEN txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent,
@@ -31,7 +34,7 @@ WITH typed AS (
   CROSS JOIN LATERAL (
     SELECT lower(concat_ws(' ', COALESCE(agent_company_name, ''), COALESCE(agent_name, ''), COALESCE(agent_address, ''))) AS txt
   ) t
-  WHERE ons_code = 'E09000033'
+  WHERE ons_code = 'E09000001'
 ),
 decided AS (
   SELECT
@@ -71,12 +74,13 @@ overall AS (
 ),
 types AS (
   SELECT * FROM (VALUES
-    ('FULL (Major)', 1),
-    ('FULL (Non-Major)', 2),
-    ('LBC', 3),
-    ('ADFULL', 4),
-    ('ADLBC', 5),
-    ('ADV', 6)
+    ('FULL', 1),
+    ('FULMAJ', 2),
+    ('FULEIA', 3),
+    ('LBC', 4),
+    ('ADVT', 5),
+    ('MDC', 6),
+    ('LDC', 7)
   ) AS t(app_type, sort_order)
 ),
 rows AS (
@@ -102,7 +106,7 @@ payload AS (
   FROM rows
 )
 INSERT INTO public.query_cache (cache_key, generated_at, ttl_seconds, payload)
-SELECT 'wcc_agent_compare_baseline_approval', now(), 86400, payload.j
+SELECT 'city_agent_compare_baseline_approval', now(), 86400, payload.j
 FROM payload
 ON CONFLICT (cache_key)
 DO UPDATE SET generated_at = EXCLUDED.generated_at,

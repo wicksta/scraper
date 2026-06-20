@@ -11,6 +11,7 @@ WITH app_text AS (
       COALESCE(agent_address, '')
     )) AS txt
   FROM public.applications
+  WHERE ons_code = 'E09000033'
 ),
 tagged AS (
   SELECT

@@ -42,5 +42,15 @@ ngist/
 ngist
 hz/
 hz
+cilappeals
+cilappeals/
 
 .venv-docling/
+
+cil_appeals
+cil_appeals/
+
+*.work.php
+*.datefix.php
+__pycache__/
+*.pyc

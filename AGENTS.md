@@ -8,12 +8,13 @@
 ## Deployment Topology
 - `/opt/scraper` and `/var/www/html` are on the HZ server alongside PostgreSQL.
 - `ngist/public_html` is on a different server and is only visible here via an SSH-mounted filesystem.
+- `ngist/public_html` represents the frontend/app server environment. In normal operation, user-facing PHP pages there proxy deeper AI/document work to Otso.
 - Do not assume PHP pages under `ngist/public_html` can access local HZ-server paths such as `/var/www/html/...` or local loopback-hosted endpoints as if they were on the same machine.
-- When integrating `ngist/public_html` with services under `/var/www/html`, treat them as cross-server calls unless the user explicitly says otherwise.
+- When integrating `ngist/public_html` with services under `/var/www/html`, treat them as cross-server `ngist -> Otso` calls unless the user explicitly says otherwise.
 
 Server names in current use:
-- `Otso`: the Hetzner/Helsinki server hosting `/opt/scraper`, `/var/www/html`, and PostgreSQL.
-- `Klaus`: the Germany-based box primarily doing scraping work.
+- `Otso`: the Hetzner/Helsinki server hosting `/opt/scraper`, `/var/www/html`, PostgreSQL, and the deeper AI/extraction/worker services.
+- `Klaus`: the Germany-based box primarily doing scraping work. Treat it as separate from normal `ngist -> Otso` document, drafting, and AI workflows unless the task is explicitly about scraping or scrape ingestion.
 
 ## Environment Variables
 Use `.env` (loaded by `bootstrap.js`) for DB connectivity.
@@ -400,6 +401,148 @@ Indexes:
 Related objects:
 - `applications_legacy` (VIEW): exposes legacy column names with spaces/case for merge/export compatibility.
 
+### `application_relationship_families`
+Purpose: canonical cached relationship-analysis result for one planning-permission family.
+
+Columns:
+- `id bigserial` (PK)
+- `ons_code text not null`
+- `root_reference text`
+- `family_hash text not null`
+- `graph_json jsonb not null`
+- `relationship_json jsonb not null`
+- `model text`
+- `graph_version text not null`
+- `prompt_version text not null`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes / constraints:
+- unique (`ons_code`, `family_hash`, `graph_version`, `prompt_version`)
+- btree on (`ons_code`, `root_reference`)
+- GIN on `graph_json`
+- GIN on `relationship_json`
+
+### `application_relationship_family_members`
+Purpose: maps each application reference in a relationship family to the cached canonical family record.
+
+Columns:
+- `family_id bigint not null` (FK -> `application_relationship_families.id`)
+- `ons_code text not null`
+- `reference text not null`
+- `role_hint text`
+- `created_at timestamptz not null default now()`
+
+Constraints / indexes:
+- PK (`family_id`, `reference`)
+- unique (`ons_code`, `reference`)
+- btree on (`ons_code`, `reference`)
+
+### `wcc_retrofit_lbc_applications`
+Purpose: Westminster-only cached analysis of `/LBC` applications for first-cut environmental retrofit relevance, including timing / route summary fields and document-inventory scrape status.
+
+Columns:
+- `id bigserial` (PK)
+- `ons_code text not null`
+- `reference text not null`
+- `keyval text`
+- `application_received date`
+- `application_validated date`
+- `decision_made_date date`
+- `decision_issued_date date`
+- `decision text`
+- `actual_decision_level text`
+- `proposal text`
+- `address text`
+- `application_type text`
+- `source_snapshot_json jsonb not null default '{}'::jsonb`
+- `prefilter_status text not null default 'new'`
+- `prefilter_keywords jsonb not null default '[]'::jsonb`
+- `analysis_status text not null default 'new'`
+- `is_candidate boolean not null default false`
+- `confidence text`
+- `reasoning text`
+- `retrofit_themes jsonb not null default '[]'::jsonb`
+- `model text`
+- `prompt_version text`
+- `raw_model_json jsonb`
+- `determination_days integer`
+- `approval_status text`
+- `decision_route text`
+- `documents_url text`
+- `documents_scrape_status text not null default 'not_started'`
+- `documents_scraped_at timestamptz`
+- `documents_error text`
+- `document_count integer`
+- `first_classified_at timestamptz`
+- `last_classified_at timestamptz`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes / constraints:
+- unique (`ons_code`, `reference`)
+- btree on (`ons_code`, `is_candidate`, `analysis_status`)
+- btree on (`documents_scrape_status`, `last_classified_at desc`)
+- GIN on `retrofit_themes`
+- GIN on `source_snapshot_json`
+
+### `wcc_retrofit_lbc_document_inventory`
+Purpose: Westminster document-tab inventory rows scraped for matched retrofit-related `/LBC` applications.
+
+Columns:
+- `id bigserial` (PK)
+- `application_analysis_id bigint not null` (FK -> `wcc_retrofit_lbc_applications.id`)
+- `ons_code text not null`
+- `reference text not null`
+- `documents_url text`
+- `document_url text not null`
+- `raw_href text`
+- `description text`
+- `document_type text`
+- `published_date_raw text`
+- `published_date date`
+- `normalized_class text`
+- `raw_source_json jsonb not null default '{}'::jsonb`
+- `scraped_at timestamptz not null default now()`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes / constraints:
+- unique (`reference`, `document_url`)
+- btree on (`application_analysis_id`, `normalized_class`)
+- btree on (`ons_code`, `reference`)
+- GIN on `raw_source_json`
+
+### `wcc_retrofit_lbc_document_pack_analysis`
+Purpose: cleaned applicant-side document-pack analysis for Westminster retrofit-related `/LBC` inventories, separating substantive submission documents from procedural or council-generated material.
+
+Columns:
+- `inventory_id bigint` (PK, FK -> `wcc_retrofit_lbc_document_inventory.id`)
+- `application_analysis_id bigint not null` (FK -> `wcc_retrofit_lbc_applications.id`)
+- `ons_code text not null`
+- `reference text not null`
+- `analysis_status text not null default 'new'`
+- `include_in_pack boolean`
+- `exclusion_reason text`
+- `normalized_pack_class text`
+- `normalized_pack_label text`
+- `classifier_stage text`
+- `model_confidence text`
+- `model_reasoning text`
+- `prompt_version text`
+- `model text`
+- `raw_model_json jsonb`
+- `analyzed_at timestamptz`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes / constraints:
+- PK on `inventory_id`
+- btree on (`ons_code`, `reference`)
+- btree on (`analysis_status`, `include_in_pack`, `normalized_pack_class`)
+- btree on (`application_analysis_id`, `normalized_pack_class`)
+- GIN on `raw_model_json`
+
 ### `application_backfill_state`
 Purpose: per-ONS cursor for week-by-week backfill discovery.
 
@@ -492,13 +635,17 @@ Notes:
 - If connection drops, listener reconnect logic is required because `LISTEN` state is per-connection.
 
 ## Operational Reminders
-- Hetzner `php8.3-fpm` has previously failed with `Result: oom-kill` and stayed down until manually restarted.
-- Periodically remind the user that the systemd unit should be hardened so PHP-FPM auto-restarts after failure, rather than relying on manual notice and restart.
+- Hetzner `php8.3-fpm` previously failed with `Result: oom-kill` and stayed down until manually restarted.
+- The live unit is now hardened with `OOMPolicy=continue` plus restart settings (`Restart=always`, `RestartSec=5s`, `StartLimitBurst=20`).
+- If PHP-FPM OOM behavior is revisited, check `systemctl show php8.3-fpm -p OOMPolicy -p Restart -p RestartSec -p StartLimitBurst` and `systemctl cat php8.3-fpm` before assuming the hardening is missing.
 
 ## Operational Guidance For Agents
 - Treat `documents` as parent entity for `chunks` and `llm_outputs`.
 - Preserve idempotency semantics around `scrape_jobs.idempotency_key`.
 - For `ngist` MySQL planning records (`planit_applications` / `app_combined_nmrk_planit`): treat `status` as decision/outcome text and `app_state` as workflow/state text.
+- For document extraction, drafting, conditions, and similar AI/document workflows, assume the path is `browser -> ngist -> Otso`. Do not attribute those flows to `Klaus` unless the issue is explicitly scrape-pipeline related.
+- For report-style outputs that already exist in Markdown and need to be turned into a Newmark-style Word note, reuse `/opt/scraper/scripts/export_markdown_note_docx.js`. It converts Markdown into the existing `note_template.docx` render pipeline via `/opt/scraper/workers/document_render_word.php`.
+- Westminster Detailed Stats dashboard caches are intentionally Westminster-only. The `query_cache` keys used by `ngist/public_html/wcc/wcc_stats.php` should be generated from `public.applications` with `ons_code = 'E09000033'`, not from all LPAs.
 - For direct MySQL checks against the legacy `ngist` app DB, do not rely on `ngist/public_html/connect.php` if you only need MySQL. That bootstrap also opens Postgres and may fail before MySQL is available. Prefer a minimal PHP snippet that loads `/opt/scraper/ngist/.env`, reads `MYSQL_HOST` / `MYSQL_DB` or `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASS` or `MYSQL_PASSWORD`, and then creates a standalone MySQL PDO connection.
 - For direct DB checks/queries (Postgres/MySQL), proceed when needed; if sandbox networking blocks access, rerun outside sandbox via escalation and request user consent.
 - For vector search changes, keep `vector(1536)` dimension unchanged unless a coordinated embedding migration is planned.

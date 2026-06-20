@@ -1,0 +1,18 @@
+[Unit]
+Description=PDF extract_jobs worker
+After=network.target postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/html
+User=www-data
+Group=www-data
+ExecStart=/usr/bin/php /var/www/html/pdf_extract_worker.php --loop
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

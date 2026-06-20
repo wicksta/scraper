@@ -1,12 +1,13 @@
 WITH typed AS (
   SELECT
     CASE
-      WHEN reference ~* '/ADFULL$' THEN 'ADFULL'
-      WHEN reference ~* '/ADLBC$'  THEN 'ADLBC'
-      WHEN reference ~* '/FULL$'   AND major = 'Major' THEN 'FULL (Major)'
-      WHEN reference ~* '/FULL$'   THEN 'FULL (Non-Major)'
+      WHEN reference ~* '/FULL$'   THEN 'FULL'
+      WHEN reference ~* '/FULMAJ$' THEN 'FULMAJ'
+      WHEN reference ~* '/FULEIA$' THEN 'FULEIA'
       WHEN reference ~* '/LBC$'    THEN 'LBC'
-      WHEN reference ~* '/ADV$'    THEN 'ADV'
+      WHEN reference ~* '/ADVT$'   THEN 'ADVT'
+      WHEN reference ~* '/MDC$'    THEN 'MDC'
+      WHEN reference ~* '/LDC$'    THEN 'LDC'
       ELSE NULL
     END AS app_type,
     CASE
@@ -17,75 +18,70 @@ WITH typed AS (
       WHEN txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
       WHEN txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
-      WHEN txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN txt ~* '\m(avison young)\M' THEN 'Avison Young'
+      WHEN txt ~* '\m(daniel watney)\M' THEN 'Daniel Watney'
+      WHEN txt ~* '\m(iceni projects|iceni)\M' THEN 'Iceni Projects'
       WHEN txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent,
-    NULLIF(btrim(COALESCE(
-      decision,
-      unified_json #>> '{tabs,further_information,extracted,tables,applicationDetails,decision}',
-      unified_json #>> '{tabs,summary,extracted,tables,simpleDetailsTable,decision}',
-      planit_json #>> '{planit,decision}'
-    )), '') AS decision_outcome
+    application_validated::date AS validated_date,
+    decision_issued_date::date  AS issued_date
   FROM public.applications
   CROSS JOIN LATERAL (
     SELECT lower(concat_ws(' ', COALESCE(agent_company_name, ''), COALESCE(agent_name, ''), COALESCE(agent_address, ''))) AS txt
   ) t
-  WHERE ons_code = 'E09000033'
+  WHERE ons_code = 'E09000001'
 ),
-decided AS (
+timed AS (
   SELECT
     app_type,
     canonical_agent,
-    lower(decision_outcome) AS decision_outcome
+    (issued_date - validated_date) / 7.0 AS weeks_to_decision
   FROM typed
   WHERE app_type IS NOT NULL
-    AND decision_outcome IS NOT NULL
+    AND validated_date IS NOT NULL
+    AND issued_date IS NOT NULL
+    AND issued_date >= validated_date
 ),
 newmark AS (
   SELECT
     app_type,
-    ROUND(
-      100.0 * COUNT(*) FILTER (
-        WHERE decision_outcome IN ('application permitted', 'permitted', 'granted', 'approved')
-      ) / NULLIF(COUNT(*), 0),
-      1
-    ) AS newmark_approval_pct,
-    COUNT(*) AS newmark_n
-  FROM decided
+    ROUND(AVG(weeks_to_decision), 1) AS newmark_mean_weeks,
+    ROUND((PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY weeks_to_decision))::numeric, 1) AS newmark_p75_weeks,
+    ROUND((PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY weeks_to_decision))::numeric, 1) AS newmark_p90_weeks
+  FROM timed
   WHERE canonical_agent = 'Newmark (inc Gerald Eve)'
   GROUP BY app_type
 ),
 overall AS (
   SELECT
     app_type,
-    ROUND(
-      100.0 * COUNT(*) FILTER (
-        WHERE decision_outcome IN ('application permitted', 'permitted', 'granted', 'approved')
-      ) / NULLIF(COUNT(*), 0),
-      1
-    ) AS overall_approval_pct,
-    COUNT(*) AS overall_n
-  FROM decided
+    ROUND(AVG(weeks_to_decision), 1) AS overall_mean_weeks,
+    ROUND((PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY weeks_to_decision))::numeric, 1) AS overall_p75_weeks,
+    ROUND((PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY weeks_to_decision))::numeric, 1) AS overall_p90_weeks
+  FROM timed
   GROUP BY app_type
 ),
 types AS (
   SELECT * FROM (VALUES
-    ('FULL (Major)', 1),
-    ('FULL (Non-Major)', 2),
-    ('LBC', 3),
-    ('ADFULL', 4),
-    ('ADLBC', 5),
-    ('ADV', 6)
+    ('FULL', 1),
+    ('FULMAJ', 2),
+    ('FULEIA', 3),
+    ('LBC', 4),
+    ('ADVT', 5),
+    ('MDC', 6),
+    ('LDC', 7)
   ) AS t(app_type, sort_order)
 ),
 rows AS (
   SELECT
     t.app_type,
-    n.newmark_approval_pct,
-    COALESCE(n.newmark_n, 0) AS newmark_n,
-    o.overall_approval_pct,
-    COALESCE(o.overall_n, 0) AS overall_n,
+    n.newmark_mean_weeks,
+    n.newmark_p75_weeks,
+    n.newmark_p90_weeks,
+    o.overall_mean_weeks,
+    o.overall_p75_weeks,
+    o.overall_p90_weeks,
     t.sort_order
   FROM types t
   LEFT JOIN newmark n USING (app_type)
@@ -102,7 +98,7 @@ payload AS (
   FROM rows
 )
 INSERT INTO public.query_cache (cache_key, generated_at, ttl_seconds, payload)
-SELECT 'wcc_agent_compare_baseline_approval', now(), 86400, payload.j
+SELECT 'city_agent_compare_baseline_timing_percentiles', now(), 86400, payload.j
 FROM payload
 ON CONFLICT (cache_key)
 DO UPDATE SET generated_at = EXCLUDED.generated_at,

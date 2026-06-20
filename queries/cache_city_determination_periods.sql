@@ -3,27 +3,24 @@ WITH typed AS (
     reference,
     application_validated::date AS validated_date,
     decision_issued_date::date  AS decision_date,
-    major,
     CASE
-      WHEN reference ~* '/ADFULL$' THEN 'ADFULL'
-      WHEN reference ~* '/ADLBC$'  THEN 'ADLBC'
       WHEN reference ~* '/FULL$'   THEN 'FULL'
+      WHEN reference ~* '/FULMAJ$' THEN 'FULMAJ'
+      WHEN reference ~* '/FULEIA$' THEN 'FULEIA'
       WHEN reference ~* '/LBC$'    THEN 'LBC'
-      WHEN reference ~* '/ADV$'    THEN 'ADV'
+      WHEN reference ~* '/ADVT$'   THEN 'ADVT'
+      WHEN reference ~* '/MDC$'    THEN 'MDC'
+      WHEN reference ~* '/LDC$'    THEN 'LDC'
       ELSE NULL
     END AS base_type
   FROM public.applications
-  WHERE ons_code = 'E09000033'
+  WHERE ons_code = 'E09000001'
     AND application_validated IS NOT NULL
     AND decision_issued_date IS NOT NULL
 ),
 classified AS (
   SELECT
-    CASE
-      WHEN base_type = 'FULL' AND major = 'Major' THEN 'FULL (Major)'
-      WHEN base_type = 'FULL'                    THEN 'FULL (Non-Major)'
-      ELSE base_type
-    END AS app_type,
+    base_type AS app_type,
     EXTRACT(YEAR FROM decision_date)::int AS yr,
     (decision_date - validated_date)      AS days_to_decision
   FROM typed
@@ -57,12 +54,13 @@ grid AS (
     y.yr,
     COALESCE(a.avg_weeks, 0) AS avg_weeks,
     CASE
-      WHEN t.app_type = 'FULL (Major)'      THEN 1
-      WHEN t.app_type = 'FULL (Non-Major)'  THEN 2
-      WHEN t.app_type = 'LBC'               THEN 3
-      WHEN t.app_type = 'ADFULL'            THEN 4
-      WHEN t.app_type = 'ADLBC'             THEN 5
-      WHEN t.app_type = 'ADV'               THEN 6
+      WHEN t.app_type = 'FULL'    THEN 1
+      WHEN t.app_type = 'FULMAJ'  THEN 2
+      WHEN t.app_type = 'FULEIA'  THEN 3
+      WHEN t.app_type = 'LBC'     THEN 4
+      WHEN t.app_type = 'ADVT'    THEN 5
+      WHEN t.app_type = 'MDC'     THEN 6
+      WHEN t.app_type = 'LDC'     THEN 7
       ELSE 99
     END AS sort_key
   FROM types t
@@ -87,7 +85,7 @@ payload AS (
   FROM row_json
 )
 INSERT INTO public.query_cache (cache_key, generated_at, ttl_seconds, payload)
-SELECT 'determination_times_by_type', now(), 86400, payload.j
+SELECT 'city_determination_times_by_type', now(), 86400, payload.j
 FROM payload
 ON CONFLICT (cache_key)
 DO UPDATE SET generated_at = EXCLUDED.generated_at,

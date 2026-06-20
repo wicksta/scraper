@@ -3,6 +3,7 @@ WITH app_text AS (
     ons_code,
     reference,
     application_validated,
+    actual_decision_level,
     lower(concat_ws(
       ' ',
       COALESCE(agent_company_name, ''),
@@ -10,13 +11,14 @@ WITH app_text AS (
       COALESCE(agent_address, '')
     )) AS txt
   FROM public.applications
-  WHERE ons_code = 'E09000033'
+  WHERE ons_code = 'E09000001'
 ),
 tagged AS (
   SELECT
     ons_code,
     reference,
     application_validated,
+    actual_decision_level,
     CASE
       WHEN txt ~* '\m(dp9 limited|dp9)\M' THEN 'DP9'
       WHEN txt ~* '\m(turley associates|turley)\M' THEN 'Turley'
@@ -25,7 +27,9 @@ tagged AS (
       WHEN txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
       WHEN txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
-      WHEN txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN txt ~* '\m(avison young)\M' THEN 'Avison Young'
+      WHEN txt ~* '\m(daniel watney)\M' THEN 'Daniel Watney'
+      WHEN txt ~* '\m(iceni projects|iceni)\M' THEN 'Iceni Projects'
       WHEN txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent
@@ -39,14 +43,16 @@ base AS (
   FROM tagged
   WHERE canonical_agent IS NOT NULL
     AND application_validated IS NOT NULL
+    AND actual_decision_level = 'Committee Decision'
   GROUP BY canonical_agent, EXTRACT(YEAR FROM application_validated)
 ),
-apps_all_year AS (
+committee_all_year AS (
   SELECT
     EXTRACT(YEAR FROM application_validated)::int AS yr,
     COUNT(DISTINCT (ons_code, reference)) AS cnt
   FROM tagged
   WHERE application_validated IS NOT NULL
+    AND actual_decision_level = 'Committee Decision'
   GROUP BY EXTRACT(YEAR FROM application_validated)
 ),
 bounds AS (
@@ -55,7 +61,7 @@ bounds AS (
     GREATEST(
       2005,
       COALESCE((SELECT MAX(yr) FROM base), 2005),
-      COALESCE((SELECT MAX(yr) FROM apps_all_year), 2005)
+      COALESCE((SELECT MAX(yr) FROM committee_all_year), 2005)
     ) AS max_year
 ),
 years AS (
@@ -91,20 +97,20 @@ rows_by_agent AS (
 ),
 total_row_collapsed AS (
   SELECT
-    'TOTAL (All applications)' AS agent,
+    'TOTAL (Committee decisions)' AS agent,
     1 AS is_total,
     (
-      jsonb_build_object('agent', 'TOTAL (All applications)')
+      jsonb_build_object('agent', 'TOTAL (Committee decisions)')
       ||
       jsonb_object_agg(key, val ORDER BY key)
     ) AS row_obj
   FROM (
     SELECT
       ('y' || y.yr)::text AS key,
-      to_jsonb(COALESCE(a.cnt, 0)) AS val
+      to_jsonb(COALESCE(c.cnt, 0)) AS val
     FROM years y
-    LEFT JOIN apps_all_year a
-      ON a.yr = y.yr
+    LEFT JOIN committee_all_year c
+      ON c.yr = y.yr
   ) y
 ),
 all_rows AS (
@@ -126,7 +132,7 @@ payload AS (
   FROM all_rows
 )
 INSERT INTO public.query_cache (cache_key, generated_at, ttl_seconds, payload)
-SELECT 'agents_by_year', now(), 86400, payload.j
+SELECT 'city_agents_by_year_committee', now(), 86400, payload.j
 FROM payload
 ON CONFLICT (cache_key)
 DO UPDATE SET generated_at = EXCLUDED.generated_at,

@@ -7,7 +7,8 @@ WITH committee_base AS (
     decision_issued_date::date AS issued_date,
     UPPER(BTRIM(COALESCE(decision, ''))) AS decision_norm
   FROM public.applications
-  WHERE actual_decision_level IN ('Committee Decision', 'Full Committee', 'Sub-Committee')
+  WHERE ons_code = 'E09000033'
+    AND actual_decision_level IN ('Committee Decision', 'Full Committee', 'Sub-Committee')
     AND actual_committee_date IS NOT NULL
 ),
 receipt_to_validation AS (

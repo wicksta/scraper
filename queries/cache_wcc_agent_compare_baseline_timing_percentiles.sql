@@ -27,6 +27,7 @@ WITH typed AS (
   CROSS JOIN LATERAL (
     SELECT lower(concat_ws(' ', COALESCE(agent_company_name, ''), COALESCE(agent_name, ''), COALESCE(agent_address, ''))) AS txt
   ) t
+  WHERE ons_code = 'E09000033'
 ),
 timed AS (
   SELECT

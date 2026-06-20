@@ -27,6 +27,12 @@ DEFAULT_PAGE_WORKER_MEMORY_LIMIT_MB = 0
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Docling page-by-page extractor")
     p.add_argument("pdf", type=Path, help="Path to PDF")
+    p.add_argument(
+        "--extract-mode",
+        choices=["docling", "pdftotext"],
+        default="docling",
+        help="Extraction engine to use (default: docling)",
+    )
     p.add_argument("--start-page", type=int, default=1, help="1-based start page (default: 1)")
     p.add_argument("--end-page", type=int, required=True, help="1-based end page (inclusive)")
     p.add_argument(
@@ -87,16 +93,20 @@ def extract_single_page_with_pdftotext(pdf: Path, page: int) -> str:
 
 
 def run_single_page_worker(pdf: Path, page: int) -> int:
+    args = parse_args()
     try:
         limit_mb = int(os.environ.get("DOCLING_PAGE_WORKER_MEMORY_LIMIT_MB", str(DEFAULT_PAGE_WORKER_MEMORY_LIMIT_MB)))
         if limit_mb > 0:
             limit_bytes = limit_mb * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
-        text = extract_single_page_with_docling(pdf, page)
+        if args.extract_mode == "pdftotext":
+            text = extract_single_page_with_pdftotext(pdf, page)
+        else:
+            text = extract_single_page_with_docling(pdf, page)
     except Exception as exc:  # noqa: BLE001
         print(
             json.dumps(
-                {"ok": False, "page": page, "error": str(exc)},
+                {"ok": False, "page": page, "error": str(exc), "extract_mode": args.extract_mode},
                 ensure_ascii=False,
             ),
             file=sys.stderr,
@@ -105,19 +115,21 @@ def run_single_page_worker(pdf: Path, page: int) -> int:
 
     print(
         json.dumps(
-            {"ok": True, "page": page, "text": text},
+            {"ok": True, "page": page, "text": text, "extract_mode": args.extract_mode},
             ensure_ascii=False,
         )
     )
     return 0
 
 
-def run_docling_subprocess(pdf: Path, page: int) -> tuple[bool, str, str]:
+def run_docling_subprocess(pdf: Path, page: int, extract_mode: str) -> tuple[bool, str, str]:
     proc = subprocess.run(
         [
             sys.executable,
             str(Path(__file__).resolve()),
             str(pdf),
+            "--extract-mode",
+            extract_mode,
             "--start-page",
             str(page),
             "--end-page",
@@ -183,20 +195,23 @@ def main() -> int:
 
     for page in range(start_page, end_page + 1):
         t0 = time.time()
-        print(f"[docling-pagewise] page={page} start")
+        print(f"[docling-pagewise] mode={args.extract_mode} page={page} start")
         try:
             used_fallback = False
             text = ""
-            docling_ok, docling_text, docling_error = run_docling_subprocess(pdf, page)
-            if docling_ok:
-                text = docling_text
-            else:
-                print(
-                    f"[docling-pagewise] page={page} docling_failed error={docling_error} fallback=pdftotext",
-                    file=sys.stderr,
-                )
+            if args.extract_mode == "pdftotext":
                 text = extract_single_page_with_pdftotext(pdf, page)
-                used_fallback = True
+            else:
+                docling_ok, docling_text, docling_error = run_docling_subprocess(pdf, page, args.extract_mode)
+                if docling_ok:
+                    text = docling_text
+                else:
+                    print(
+                        f"[docling-pagewise] mode={args.extract_mode} page={page} docling_failed error={docling_error} fallback=pdftotext",
+                        file=sys.stderr,
+                    )
+                    text = extract_single_page_with_pdftotext(pdf, page)
+                    used_fallback = True
             out_file = out_dir / f"page_{page:04d}.txt"
             out_file.write_text(text, encoding="utf-8")
             if merged_output:
@@ -207,14 +222,14 @@ def main() -> int:
             elapsed = round(time.time() - t0, 2)
             fallback_tag = " fallback=pdftotext" if used_fallback else ""
             print(
-                f"[docling-pagewise] page={page} ok chars={len(text)} elapsed_s={elapsed} out={out_file}{fallback_tag}"
+                f"[docling-pagewise] mode={args.extract_mode} page={page} ok chars={len(text)} elapsed_s={elapsed} out={out_file}{fallback_tag}"
             )
         except Exception as exc:  # noqa: BLE001
             failed += 1
             msg = str(exc)
             errors.append({"page": page, "error": msg})
             elapsed = round(time.time() - t0, 2)
-            print(f"[docling-pagewise] page={page} failed elapsed_s={elapsed} error={msg}", file=sys.stderr)
+            print(f"[docling-pagewise] mode={args.extract_mode} page={page} failed elapsed_s={elapsed} error={msg}", file=sys.stderr)
             if args.stop_on_error:
                 break
         if args.sleep_ms > 0:
@@ -230,6 +245,7 @@ def main() -> int:
         "pages_ok": ok,
         "pages_failed": failed,
         "errors": errors,
+        "extract_mode": args.extract_mode,
     }
     print(json.dumps(summary, ensure_ascii=False))
     return 0 if failed == 0 else 1

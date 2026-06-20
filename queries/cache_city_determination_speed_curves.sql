@@ -1,20 +1,21 @@
 WITH scopes AS (
   SELECT *
   FROM (VALUES
-    ('wcc_determination_speed_curves', false),
-    ('wcc_determination_speed_curves_5y', true)
+    ('city_determination_speed_curves', false),
+    ('city_determination_speed_curves_5y', true)
   ) AS s(cache_key, use_five_years)
 ),
 typed_base AS (
   SELECT
     s.cache_key,
     CASE
-      WHEN a.reference ~* '/FULL$'   AND a.major = 'Major' THEN 'MAJOR'
-      WHEN a.reference ~* '/FULL$'   THEN 'NON-MAJOR'
+      WHEN a.reference ~* '/FULL$'   THEN 'FULL'
+      WHEN a.reference ~* '/FULMAJ$' THEN 'FULMAJ'
+      WHEN a.reference ~* '/FULEIA$' THEN 'FULEIA'
       WHEN a.reference ~* '/LBC$'    THEN 'LBC'
-      WHEN a.reference ~* '/ADFULL$' THEN 'ADFULL'
-      WHEN a.reference ~* '/ADLBC$'  THEN 'ADLBC'
-      WHEN a.reference ~* '/ADV$'    THEN 'ADV'
+      WHEN a.reference ~* '/ADVT$'   THEN 'ADVT'
+      WHEN a.reference ~* '/MDC$'    THEN 'MDC'
+      WHEN a.reference ~* '/LDC$'    THEN 'LDC'
       ELSE NULL
     END AS app_type,
     CASE
@@ -25,7 +26,9 @@ typed_base AS (
       WHEN t.txt ~* '\m(rolfe judd)\M' THEN 'Rolfe Judd'
       WHEN t.txt ~* '\m(montagu evans llp|montagu evans)\M' THEN 'Montagu Evans'
       WHEN t.txt ~* '\m(cb richard ellis|cbre)\M' THEN 'CBRE'
-      WHEN t.txt ~* '\m(howard de walden management ltd|howard de walden|howard de/walden|howard de\\/walden)\M' THEN 'Howard de Walden'
+      WHEN t.txt ~* '\m(avison young)\M' THEN 'Avison Young'
+      WHEN t.txt ~* '\m(daniel watney)\M' THEN 'Daniel Watney'
+      WHEN t.txt ~* '\m(iceni projects|iceni)\M' THEN 'Iceni Projects'
       WHEN t.txt ~* '\m(jones lang lasalle ltd|jones lang lasalle|jll)\M' THEN 'JLL'
       ELSE NULL
     END AS canonical_agent,
@@ -42,7 +45,7 @@ typed_base AS (
   CROSS JOIN LATERAL (
     SELECT lower(concat_ws(' ', COALESCE(a.agent_company_name, ''), COALESCE(a.agent_name, ''), COALESCE(a.agent_address, ''))) AS txt
   ) t
-  WHERE a.ons_code = 'E09000033'
+  WHERE a.ons_code = 'E09000001'
     AND a.application_validated IS NOT NULL
     AND a.decision_issued_date IS NOT NULL
     AND a.decision_issued_date::date >= a.application_validated::date
@@ -60,11 +63,7 @@ typed AS (
 
   SELECT cache_key, 'COMMITTEE' AS app_type, canonical_agent, week_bin
   FROM typed_base
-  WHERE lower(btrim(COALESCE(actual_decision_level, ''))) IN (
-    'committee decision',
-    'full committee',
-    'sub-committee'
-  )
+  WHERE actual_decision_level = 'Committee Decision'
 ),
 base AS (
   SELECT cache_key, app_type, canonical_agent, week_bin
@@ -73,13 +72,14 @@ base AS (
 types AS (
   SELECT *
   FROM (VALUES
-    ('MAJOR', 1),
-    ('NON-MAJOR', 2),
-    ('LBC', 3),
-    ('ADFULL', 4),
-    ('ADLBC', 5),
-    ('ADV', 6),
-    ('COMMITTEE', 7)
+    ('FULL', 1),
+    ('FULMAJ', 2),
+    ('FULEIA', 3),
+    ('LBC', 4),
+    ('ADVT', 5),
+    ('MDC', 6),
+    ('LDC', 7),
+    ('COMMITTEE', 8)
   ) AS t(app_type, sort_order)
 ),
 bounds AS (
@@ -312,7 +312,7 @@ payload AS (
       jsonb_agg(
         jsonb_build_object(
           'type', r.app_type,
-          'target_weeks', CASE WHEN r.app_type IN ('MAJOR', 'COMMITTEE') THEN 13 ELSE 8 END,
+          'target_weeks', CASE WHEN r.app_type IN ('FULMAJ', 'FULEIA', 'COMMITTEE') THEN 13 ELSE 8 END,
           'newmark_n', r.newmark_n,
           'market_n', r.market_n,
           'points', r.points,
