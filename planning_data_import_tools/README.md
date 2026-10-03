@@ -40,7 +40,7 @@ Rank 1 is the highest value. Ties receive successive ranks, ordered by ONS code.
 
 Importing rebuilds historical years as well as adding new ones, so revisions are captured. Coverage regression, unexpected symbols/missing counts, duplicate authority/quarter rows, mismatched sheet periods and inconsistent component totals fail validation.
 
-**Dashboard code is unchanged.** Its existing PHP/JavaScript readers use these files directly, but its hard-coded date labels do not yet read the metadata. Refer to `appeals_metadata.json` for actual coverage, and expect browser/static-file caches to require a reload after publication.
+The dashboard's existing PHP/JavaScript readers use these files directly. Its Appeals headings and source footers read `appeals_metadata.json` on each page request, showing the full dataset period, ranking period, last data update and last successful check. Reload the dashboard after publication to see new dates; missing or malformed metadata shows unavailable coverage instead of an old hard-coded date.
 
 ## Publication, backups and recovery
 
@@ -69,7 +69,7 @@ node /opt/scraper/planning_data_import_tools/verify_dashboard.js --data-dir /tmp
 
 Tests cover ODS numeric cells/repeats, malformed data and discovery ambiguity, cohort aggregation, denominators, population selection, null rates/ties, rollback and interrupted-run recovery.
 
-The dashboard verifier checks output hashes, both PHP readers, annual/ranking card markup and the major/non-major chart configurations for Westminster and Camden. It uses mocked DOM/canvas objects, not a logged-in browser session.
+The dashboard verifier checks output hashes, both PHP readers, annual/ranking/chart card markup and the major/non-major chart configurations for Westminster and Camden. It also checks that later metadata changes coverage/update/check dates and that missing or malformed metadata has a truthful fallback. It uses mocked DOM/canvas objects, not a logged-in browser session.
 
 ## Initial import: 3 October 2026
 
