@@ -1,5 +1,20 @@
 # Scraper / Dashboard Notes
 
+## Oxford Street Development Corporation
+
+OSDC (`E51000008`) uses the shared Detailed Stats, Officers, Agent Comparison,
+and Performance pages. Its `PA/year/number` references do not identify the
+application type; OSDC queries classify the stored `application_type` instead.
+The matching PHP mapping lives in `wcc/osdc_authority.php` on nGISt.
+
+The nine `queries/cache_osdc_*.sql` producers write ten distinct `osdc_` cache
+keys and are automatically picked up by `scripts/refresh_query_cache.js` and
+the existing daily timer. Officers are queried directly from `applications`.
+Pending/consultation/new-application outcomes are excluded from approval
+percentages. Timing requires valid validation and decision-issued dates.
+Major status and committee routes are absent from the current OSDC records,
+so those breakdowns and statutory target lines are not displayed.
+
 ## Adding A Third LPA To The Shared Detailed Stats / Comparison / Performance Tabs
 
 The shared PHP pages now support more than Westminster-only logic:
