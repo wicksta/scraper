@@ -4,7 +4,12 @@ const DEFAULT_PLANNING_DATA_API_URL = "https://www.planning.data.gov.uk/entity.j
 const DEFAULT_PLANNING_DATA_DATASET_CATALOGUE_URL = "https://www.planning.data.gov.uk/dataset.json";
 const DEFAULT_PLANNING_DATA_EXCLUDED_DATASETS = ["listed-building", "listed-building-outline"];
 const DEFAULT_PLANNING_DATA_EXCLUDED_PREFIXES = ["statistical-geography"];
-const DEFAULT_NEARBY_HERITAGE_DATASETS = ["listed-building", "listed-building-outline", "scheduled-monument"];
+const DEFAULT_NEARBY_HERITAGE_DATASETS = [
+  "listed-building",
+  "listed-building-outline",
+  "scheduled-monument",
+  "conservation-area",
+];
 
 let planningDataDatasetCache = null;
 

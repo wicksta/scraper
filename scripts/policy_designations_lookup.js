@@ -105,6 +105,11 @@ const argv = yargs(hideBin(process.argv))
     default: 10,
     describe: "Max nearby scheduled monuments to include by name in llm mode.",
   })
+  .option("llm-conservation-areas-limit", {
+    type: "number",
+    default: 10,
+    describe: "Max nearby conservation areas to include by name in llm mode.",
+  })
   .option("include-planning-data", {
     type: "boolean",
     default: true,
@@ -133,7 +138,7 @@ const argv = yargs(hideBin(process.argv))
   .option("include-nearby-heritage", {
     type: "boolean",
     default: true,
-    describe: "Also query nearby listed buildings and scheduled monuments from planning.data.gov.uk.",
+    describe: "Also query nearby listed buildings, scheduled monuments, and conservation areas from planning.data.gov.uk.",
   })
   .option("nearby-heritage-dataset", {
     type: "array",
@@ -143,7 +148,7 @@ const argv = yargs(hideBin(process.argv))
   .option("nearby-heritage-radius-m", {
     type: "number",
     default: 500,
-    describe: "Radius in metres for nearby listed building / scheduled monument search.",
+    describe: "Radius in metres for nearby listed building, scheduled monument, and conservation-area search.",
   })
   .option("nearby-heritage-limit", {
     type: "number",
@@ -248,6 +253,9 @@ function buildSummaryPayload(raw, options) {
   const nearbyScheduled = (raw.nearbyHeritage?.entities || [])
     .filter((entity) => entity.dataset === "scheduled-monument")
     .map(compactNearbyHeritageEntity);
+  const nearbyConservationAreas = (raw.nearbyHeritage?.entities || [])
+    .filter((entity) => entity.dataset === "conservation-area")
+    .map(compactNearbyHeritageEntity);
 
   return {
     ok: raw.ok,
@@ -276,8 +284,10 @@ function buildSummaryPayload(raw, options) {
       radiusMeters: raw.nearbyHeritage?.radiusMeters ?? null,
       listedBuildingCount: nearbyListed.length,
       scheduledMonumentCount: nearbyScheduled.length,
+      conservationAreaCount: nearbyConservationAreas.length,
       closestListedBuildings: nearbyListed.slice(0, Math.max(1, Number(options.listedLimit || 10))),
       scheduledMonuments: nearbyScheduled.slice(0, Math.max(1, Number(options.scheduledLimit || 10))),
+      conservationAreas: nearbyConservationAreas.slice(0, Math.max(1, Number(options.conservationAreaLimit || 10))),
     },
   };
 }
@@ -306,6 +316,9 @@ function buildLlmPayload(raw, options) {
   const listed = (raw.nearbyHeritage?.entities || [])
     .filter((entity) => entity.dataset === "listed-building")
     .sort((a, b) => (a.distanceMeters ?? 1e9) - (b.distanceMeters ?? 1e9));
+  const conservationAreas = (raw.nearbyHeritage?.entities || [])
+    .filter((entity) => entity.dataset === "conservation-area")
+    .sort((a, b) => (a.distanceMeters ?? 1e9) - (b.distanceMeters ?? 1e9));
 
   const scheduledLines = scheduled
     .slice(0, Math.max(1, Number(options.scheduledLimit || 10)))
@@ -316,6 +329,9 @@ function buildLlmPayload(raw, options) {
       const grade = entity.listedBuildingGrade ? `, Grade ${entity.listedBuildingGrade}` : "";
       return `${entity.name || "Listed building"} (${entity.distanceMeters ?? "?"}m${grade})`;
     });
+  const conservationAreaLines = conservationAreas
+    .slice(0, Math.max(1, Number(options.conservationAreaLimit || 10)))
+    .map((entity) => entity.name || "Conservation Area");
 
   const redFlags = [];
   if (localDesignationLines.some((x) => /world heritage/i.test(x))) redFlags.push("Site lies within or intersects a World Heritage Site.");
@@ -324,6 +340,7 @@ function buildLlmPayload(raw, options) {
   if (localDesignationLines.some((x) => /monument saturation zone/i.test(x))) redFlags.push("Site lies within or intersects a Monument Saturation Zone.");
   if (scheduled.length > 0) redFlags.push("Scheduled monuments are nearby and may create heritage setting constraints.");
   if (listed.length > 0) redFlags.push(`Listed buildings nearby within ${raw.nearbyHeritage?.radiusMeters ?? 500}m: ${listed.length}.`);
+  if (conservationAreas.length > 0) redFlags.push(`Conservation areas intersect the ${raw.nearbyHeritage?.radiusMeters ?? 500}m site radius: ${conservationAreas.length}.`);
 
   const prose = [];
   if (raw.resolvedLpa?.lpaName) prose.push(`Site falls within ${raw.resolvedLpa.lpaName}.`);
@@ -331,6 +348,7 @@ function buildLlmPayload(raw, options) {
   if (nationalDesignationLines.length) prose.push(`National planning.data.gov.uk context identified: ${nationalDesignationLines.slice(0, 6).join("; ")}.`);
   if (scheduledLines.length) prose.push(`Nearby scheduled monuments: ${scheduledLines.join("; ")}.`);
   if (listed.length) prose.push(`There are ${listed.length} listed buildings within ${raw.nearbyHeritage?.radiusMeters ?? 500}m; closest examples: ${listedLines.slice(0, 5).join("; ")}.`);
+  if (conservationAreas.length) prose.push(`Conservation areas intersecting the ${raw.nearbyHeritage?.radiusMeters ?? 500}m site radius: ${conservationAreaLines.slice(0, 5).join("; ")}.`);
 
   return {
     ok: raw.ok,
@@ -351,6 +369,8 @@ function buildLlmPayload(raw, options) {
       scheduled_monuments: scheduledLines,
       listed_buildings_within_radius: listed.length,
       closest_listed_buildings: listedLines,
+      conservation_areas_intersecting_radius: conservationAreas.length,
+      conservation_areas: conservationAreaLines,
     },
     red_flags: uniqStrings(redFlags),
     planning_relevance_notes: uniqStrings([
@@ -358,6 +378,7 @@ function buildLlmPayload(raw, options) {
       nationalDesignationLines.length ? "Use planning.data.gov.uk results as wider designation/context evidence around the site." : null,
       scheduled.length ? "Scheduled monuments nearby may affect archaeological, heritage, and setting assessments." : null,
       listed.length ? "Nearby listed buildings indicate likely heritage setting sensitivity even where the site itself is not listed." : null,
+      conservationAreas.length ? "Nearby conservation areas may create heritage and character sensitivity, including setting considerations." : null,
     ]),
   };
 }
@@ -671,11 +692,13 @@ async function main() {
       ? buildSummaryPayload(payload, {
           listedLimit: Number(argv["llm-listed-buildings-limit"] || 10),
           scheduledLimit: Number(argv["llm-scheduled-monuments-limit"] || 10),
+          conservationAreaLimit: Number(argv["llm-conservation-areas-limit"] || 10),
         })
       : outputMode === "llm"
         ? buildLlmPayload(payload, {
             listedLimit: Number(argv["llm-listed-buildings-limit"] || 10),
             scheduledLimit: Number(argv["llm-scheduled-monuments-limit"] || 10),
+            conservationAreaLimit: Number(argv["llm-conservation-areas-limit"] || 10),
           })
         : payload;
 

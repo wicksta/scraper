@@ -48,6 +48,7 @@ function policy_designations_build_args(array $input): array
         'planning-data-limit' => 'planning-data-limit',
         'llm-listed-buildings-limit' => 'llm-listed-buildings-limit',
         'llm-scheduled-monuments-limit' => 'llm-scheduled-monuments-limit',
+        'llm-conservation-areas-limit' => 'llm-conservation-areas-limit',
         'nearby-heritage-radius-m' => 'nearby-heritage-radius-m',
         'nearby-heritage-limit' => 'nearby-heritage-limit',
     ];

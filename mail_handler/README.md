@@ -24,6 +24,27 @@ MAIL_HANDLER_IMAP_USER=inbox@example.com
 MAIL_HANDLER_IMAP_PASSWORD=secret
 MAIL_HANDLER_IMAP_MAILBOX=INBOX
 
+# Optional second inbox for quick personal task creation.
+# Host/port/secure/password default to the primary IMAP settings when omitted.
+MAIL_HANDLER_ACTION_IMAP_HOST=imap.example.com
+MAIL_HANDLER_ACTION_IMAP_PORT=993
+MAIL_HANDLER_ACTION_IMAP_SECURE=true
+MAIL_HANDLER_ACTION_IMAP_USER=action@ngist.app
+MAIL_HANDLER_ACTION_IMAP_PASSWORD=secret
+MAIL_HANDLER_ACTION_IMAP_MAILBOX=INBOX
+MAIL_HANDLER_ACTION_FROM_ADDRESS=action@ngist.app
+MAIL_HANDLER_ACTION_FROM_NAME=nGISt Actions
+
+# Optional third inbox for long-form project notes.
+MAIL_HANDLER_NOTES_IMAP_HOST=imap.example.com
+MAIL_HANDLER_NOTES_IMAP_PORT=993
+MAIL_HANDLER_NOTES_IMAP_SECURE=true
+MAIL_HANDLER_NOTES_IMAP_USER=notes@ngist.app
+MAIL_HANDLER_NOTES_IMAP_PASSWORD=secret
+MAIL_HANDLER_NOTES_IMAP_MAILBOX=INBOX
+MAIL_HANDLER_NOTES_FROM_ADDRESS=notes@ngist.app
+MAIL_HANDLER_NOTES_FROM_NAME=nGISt Notes
+
 MAIL_HANDLER_SMTP_HOST=smtp.example.com
 MAIL_HANDLER_SMTP_PORT=587
 MAIL_HANDLER_SMTP_SECURE=false
@@ -42,6 +63,9 @@ MAIL_HANDLER_DOCGEN_API_KEY=shared-internal-key
 
 ```env
 MAIL_HANDLER_CLASSIFIER_MODEL=gpt-4o-mini
+MAIL_HANDLER_ACTION_CLEANUP_MODEL=gpt-4o-mini
+MAIL_HANDLER_NOTE_CLEANUP_MODEL=gpt-5.6-luna
+MAIL_HANDLER_HANDWRITING_MODEL=gpt-5.6-luna
 MAIL_HANDLER_DOCGEN_POLL_MS=1500
 MAIL_HANDLER_DOCGEN_TIMEOUT_MS=180000
 MAIL_HANDLER_SMTP_VERIFY_TIMEOUT_MS=15000
@@ -53,6 +77,10 @@ MAIL_HANDLER_IMAP_RECONNECT_DELAY_MS=5000
 ## Behaviour
 
 - Watches the configured IMAP mailbox for `UNSEEN` messages.
+- Also watches `action@ngist.app` when configured, using the same sender allowlist, and routes accepted messages to the Personal Tasks quick-add worker.
+- Also watches `notes@ngist.app` when configured. It saves the cleaned body as a project note, creates tasks only from explicit action markers, and links those tasks back to the note.
+- Routes PNG attachments from `my@remarkable.com` in the primary inbox to the handwriting transcription worker with personal-task persistence enabled.
+- For action emails, combines the subject and body as task input so subject-only emails can create actions.
 - Extracts the inbound email body.
 - Uses OpenAI to choose `note`, `letter`, or `minutes`, and prepares `notes_text`.
 - Starts the local Otso document-generation job and polls `app_ingest_jobs`.

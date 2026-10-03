@@ -78,3 +78,30 @@ The supplied `Planning_quality_-_open_data_-_202606.ods` release was published s
 Verification included independent aggregation of every annual count and ranking total, the existing live PHP readers and dashboard render functions, and an unchanged repeat import. Automatic GOV.UK discovery also produced the same dataset. Unit tests cover format handling and rollback/recovery.
 
 Regression against the saved older workbook identified the existing converter's comma-number bug in six 2021 non-major authority/year records: Birmingham, Bradford, Leeds, Cornwall, Buckinghamshire and Wiltshire. The old JSON exactly matched the converter's literal CSV behaviour; the new importer correctly retains the omitted counts. Other old-workbook values matched.
+
+## District Matters CSV importer
+
+`import_district_matters.py` converts the supplied Planning Performance Dashboard XLSX into the existing 26-column CSV read by `district_data_fetcher.php`. It uses Python 3's standard library only, requires no database connection, and installs no scheduler.
+
+```bash
+# Validate the workbook and preview whether the existing CSV would change.
+python3 /opt/scraper/planning_data_import_tools/import_district_matters.py --dry-run
+
+# Publish to the existing mounted nGISt CSV, retaining a backup when it changes.
+python3 /opt/scraper/planning_data_import_tools/import_district_matters.py
+
+# Build a separate file for inspection without changing the live dashboard.
+python3 /opt/scraper/planning_data_import_tools/import_district_matters.py --output /tmp/district_matters.csv
+```
+
+The default source is the supplied `Planning_Performance_Dashboard_Table.xlsx` attachment. It does **not** discover new releases; pass `--source NEW_OFFICIAL_XLSX_URL` for a later attachment, or a local workbook path for an offline run.
+
+The District Matters worksheet is selected by name. The importer checks its expected semantic headers, extracts the reporting period from its title, and rejects duplicate ONS rows, malformed numbers, out-of-range percentages, and incomplete authority coverage.
+
+The June 2026 workbook splits non-householder non-major decisions into residential and other categories. To preserve the existing card's definition (non-majors excluding householders), the importer sums their decision counts and uses decision-weighted percentages. It uses the published major summary directly. Zero-denominator and missing percentages remain blank. The source's combined non-major summary, including householders, is also retained in the CSV's final four columns.
+
+The legacy filename `2025_District_Matters_Cleaned.csv` is retained for reader compatibility. A companion `2025_District_Matters_Cleaned.metadata.json` records the actual period, source, hashes and generation time. CSV replacement is atomic; metadata is written last. Prior files are backed up under `.state/district-matters/`. Restore the saved CSV and its metadata to roll back.
+
+Initial staged verification: year ending June 2026, 311 rows. Checked against the existing PHP reader for Westminster, including the major summary and decision-weighted non-householder percentages, missing/zero cases and an unchanged repeat run. The live CSV was not replaced. Dashboard source dates remain hardcoded and must be updated separately before describing a newly published dataset as current.
+
+Publication on 3 October 2026: the June 2026 CSV is now live. The District Matters fetcher supports `includeMetadata=1`, verifies that the companion metadata hash matches the CSV, and returns `{data, metadata}`. The dashboard reads the period and import date from that metadata and labels the data as manually refreshed. Future imports update those labels automatically. Missing or mismatched metadata shows “Reporting period unavailable” rather than an old hardcoded date. Existing callers without the option still receive the original field map.

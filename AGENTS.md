@@ -16,6 +16,12 @@ Server names in current use:
 - `Otso`: the Hetzner/Helsinki server hosting `/opt/scraper`, `/var/www/html`, PostgreSQL, and the deeper AI/extraction/worker services.
 - `Klaus`: the Germany-based box primarily doing scraping work. Treat it as separate from normal `ngist -> Otso` document, drafting, and AI workflows unless the task is explicitly about scraping or scrape ingestion.
 
+## Shared nGISt Job Picker
+- The shared type-ahead implementation is `/mnt/ngist/public_html/partials/job_finder.js`, using `/api.php?endpoint=letters/job_number_lookup`.
+- The compact header-style picker uses `data-header-job-lookup`; use this inline picker for pages that need to select a job without opening the standalone/modal `partials/job_finder.php` UI.
+- Add `data-select-only="true"` when selection must stay on the current page. The shared script then emits a bubbling `header-job-lookup-selected` event with `event.detail.job`, rather than navigating to `/jobs/job.php`.
+- The CIL calculator uses this select-only mode to populate its hidden file reference plus client and site fields. The shared lookup resolves a job's stored postcode through ONSPD and returns its `lad_code` / `ons_code`; CIL uses that code to select the charging authority.
+
 ## Environment Variables
 Use `.env` (loaded by `bootstrap.js`) for DB connectivity.
 
@@ -259,6 +265,61 @@ Indexes:
 - `planning_statement_sections_workspace_status_idx` (btree on `workspace_id`, `status`)
 - `planning_statement_sections_prompt_context_gin` (GIN on `prompt_context`)
 - `planning_statement_sections_generation_meta_gin` (GIN on `generation_meta`)
+
+### `condition_discharge_workspaces`
+Purpose: persistent drafting workspaces for discharging a selected condition from a tracked planning-permission decision notice, linked to an ngist job.
+
+Columns:
+- `id uuid not null default gen_random_uuid()` (PK)
+- `job_number text not null`
+- `condition_tracker_id bigint not null`
+- `decision_notice_doc_id uuid not null` (FK -> `documents.id`, `ON DELETE RESTRICT`)
+- `selected_condition_json jsonb not null default '{}'::jsonb`
+- `title text`
+- `site_address text`
+- `client_name text`
+- `local_authority text`
+- `development_description text`
+- `recipient_name text`
+- `recipient_address text`
+- `specific_instructions text`
+- `portal_submission_json jsonb not null default '{}'::jsonb` (user-entered Planning Portal submission-pack answers)
+- `status text not null default 'not_started'`
+- `draft_json jsonb not null default '{}'::jsonb`
+- `draft_text text`
+- `generation_job_id bigint`
+- `generation_meta jsonb not null default '{}'::jsonb`
+- `created_by integer`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Indexes:
+- `condition_discharge_workspaces_job_number_idx` (btree on `job_number`, `updated_at desc`)
+- `condition_discharge_workspaces_tracker_idx` (btree on `condition_tracker_id`)
+- `condition_discharge_workspaces_decision_notice_idx` (btree on `decision_notice_doc_id`)
+
+### `condition_discharge_workspace_documents`
+Purpose: durable links between a condition-discharge workspace and the job documents selected as supporting material for its letter workflow.
+
+Columns:
+- `workspace_id uuid not null` (FK -> `condition_discharge_workspaces.id`, `ON DELETE CASCADE`)
+- `doc_id uuid not null` (FK -> `documents.id`, `ON DELETE CASCADE`)
+- `display_title text`
+- `notes text`
+- `created_at timestamptz not null default now()`
+
+### `planning_portal_agent_profiles`
+Purpose: centrally managed shared Planning Portal agent identity, keyed by profile name and stored as JSON.
+
+Columns:
+- `profile_key text` (PK)
+- `profile_json jsonb not null default '{}'::jsonb`
+- `updated_by integer`
+- `updated_at timestamptz not null default now()`
+
+Constraints / indexes:
+- PK: (`workspace_id`, `doc_id`)
+- `condition_discharge_workspace_documents_doc_idx` (btree on `doc_id`)
 
 ### `planning_statement_workspace_documents`
 Purpose: workspace-level attachment table linking drafting workspaces to supporting documents in `public.documents`.
@@ -579,7 +640,34 @@ Objects present in `public`:
 - `geography_columns` (view)
 - `spatial_ref_sys` (table, PK `srid`)
 
+### LVMF 2026 PostGIS dataset
+Purpose: a separate 2026 consultation-draft LVMF model. It does **not** replace the legacy MySQL `lvmf` table or the existing `ngist` LVMF viewer.
+
+Tables:
+- `lvmf_2026_datasets`, `lvmf_2026_views`, `lvmf_2026_control_points`
+- `lvmf_2026_areas`, `lvmf_2026_area_vertices`, `lvmf_2026_control_lines`
+- `lvmf_2026_assessment_paths`, `lvmf_2026_assessment_path_points`
+- `lvmf_2026_threshold_rules`
+
+Notes:
+- Canonical protected-vista geometry is Appendix E (`ngist/public_html/lvmf/all_views.csv`) in EPSG:27700. Appendix C assessment paths are a separate display layer.
+- Appendix E plan footprints use `a-c-e` for the Viewing Corridor, `a-b-c` for the left LAA, and `a-e-f` for the right LAA. Point `d` is not a corridor-boundary vertex; it remains the Appendix E control endpoint used for the separately defined A→D curvature/control-surface calculation.
+- LVMF 2026 VC calculations use Appendix E points `a` and `d` with the Appendix F curvature/refraction coefficient `0.0673`; do not substitute Appendix C representative points or Appendix D photographic bearings.
+- Load/reload with `/opt/scraper/scripts/import_lvmf_2026_postgis.js` after applying `/opt/scraper/migrations/2026-09-13_lvmf_2026_postgis.sql`.
+- Legacy comparison objects are `lvmf_legacy_snapshots`, `lvmf_legacy_comparison_matches`, `lvmf_legacy_comparison_areas`, and `lvmf_legacy_comparison_results`. They snapshot the old MySQL viewer and must retain its literal A→B/legacy special-case behaviour; refresh with `scripts/compare_lvmf_legacy.js`.
+- Materialised change-layer objects are `lvmf_legacy_comparison_change_sets`, `lvmf_legacy_comparison_changes`, and `lvmf_legacy_comparison_height_changes`. They are derived only: red `newly_protected` is Appendix E minus the legacy constraint union, green `released` is the reverse (including legacy-only `2B.1`), and yellow `changed` is shared land without a like-for-like area category. Rebuild after refreshing the comparison with `scripts/materialize_lvmf_legacy_change_layers.js`; the nGISt comparison map reads the saved layer through `lvmf_legacy_changes.php`.
+- The legacy MySQL `lvmf` fixed-column table remains compatibility-only for the existing viewer. The normalised 2012 corridor source is held in MySQL `lvmf_2012_geometry_datasets`, `lvmf_2012_corridors`, and `lvmf_2012_corridor_control_points`; load it from `LVMF_2012_viewing_corridor_geometry.csv` using `/opt/scraper/scripts/import_lvmf_2012_geometry_mysql.js` after applying `2026-09-13_lvmf_2012_normalized_geometry_mysql.sql`. Calculation definitions are corridor-specific JSON: ordinary corridors retain A→B curvature/refraction, while 5A.2 VC1 is A→M and VC2 is a vertex control surface (`n,c,d,o`) with defining point `b`. Background-area comparisons use the 2012 5A.2 BCSA/BWSCA source controls, not a 2016 dataset.
+- There is no separate 2016 LVMF geometry dataset. The legacy comparison baseline is the 2012 `5A.2` Greenwich Park view and its Background Setting/Assessment Area (`v-y-z-w`); use the same sampled coordinates from that area when comparing against the 2026 `5B` BAA. Do not describe the legacy baseline as 2016 geometry.
+
 ## MySQL Schema Notes
+
+### `sm_update_cleaned`
+Purpose: dashboard Standard Method targets, London Plan targets, and historic delivery averages, keyed by `ONS Code`.
+
+- `londonPlanTarget` is the existing annual 2021 London Plan target.
+- `londonPlan2026Target` is a nullable unsigned integer storing the **ten-year total** from Draft London Plan 2026 Table 3.1 for 2027/28–2036/37. Divide by 10 for the annual chart comparison; it is not a phased delivery trajectory.
+- Source extract: `/opt/scraper/data/london_plan/2026_table_3_1_targets.json`; migration: `migrations/2026-10-03_london_plan_2026_targets_mysql.sql`; validated importer: `scripts/import_london_plan_2026_targets_mysql.js` (dry run by default; `--apply` writes).
+- All 33 borough rows are populated. OPDC's 11,335 ten-year target is retained in the extract but has no matching borough ONS row in this table.
 
 ### `lpa_codes`
 Purpose: canonical lookup table for LPAs used by scraper/runtime integration and external dataset matching.
@@ -596,11 +684,23 @@ Selected columns:
 - `pld_name varchar(100)`
 - `planit_area varchar(100)`
 - `datastore_id tinyint unsigned null`
+- `postal_address varchar(500) null` (single CSV-style correspondence address, including organisation name)
 
 Notes:
 - `datastore_id` maps London Datastore ArcGIS borough services `planning_local_plan_data_XX` to `lpa_codes` rows.
 - Current mapping is populated for London borough ONS codes `E09000001` through `E09000033`, corresponding to service ids `1` through `33`.
 - `LLDC` and `OPDC` do not currently have matching rows in `lpa_codes`, so no `datastore_id` values are stored for service ids `34` or `35`.
+- `postal_address` is a maintained correspondence-address cache. Use it before a web lookup when an LPA has been resolved; for example Westminster is stored as `Westminster City Council, Westminster City Hall, 64 Victoria Street, London, SW1E 6QP`.
+
+### `mbul_datasets`, `mbul_layers`, `mbul_features`
+Purpose: MySQL-backed map store for London Datastore “London Plan evidence - MBUL” GeoPackage layers used by `ngist/public_html/maps/mbul_map.php`.
+
+Notes:
+- Raw `.gpkg` files are stored privately under `ngist/private/data/mbul_gpkg/`.
+- Import/re-import is handled by `/opt/scraper/scripts/import_mbul_gpkg_to_mysql.js`.
+- `mbul_features.geom` is stored as SRID 4326 geometry with a spatial index, while original non-geometry attributes are retained in `properties` JSON.
+- Use bbox-constrained reads through `ngist/public_html/maps/mbul_geo.php`; do not load whole large MBUL layers into the browser by default.
+
 
 ### `app_ingest_jobs`
 Purpose: MySQL-backed background job tracking used by `ngist` upload, extraction, and worker flows.
@@ -621,6 +721,63 @@ Selected columns:
 Notes:
 - `user_id` was added on March 12, 2026 so jobs can be queried per logged-in user.
 - New job creation helpers in `ngist/public_html/job_logging_library.php` now populate `user_id` from the session where available.
+
+### `cil_estimates`
+Purpose: MySQL-backed saved CIL-calculator estimates for the `ngist` application.
+
+Selected columns:
+- `id` (PK), `user_id`, `file_number`, `estimate_name`, `cil_json`
+- `created_at`, `updated_at`
+
+Notes:
+- `cil_json` is the canonical saved calculator payload. The estimates list derives job/site/authority, the reported CIL total and warning badges from it.
+- `updated_at` was added on September 6, 2026 and is maintained by MySQL whenever an estimate is changed.
+
+### `personal_*` personal knowledge tables
+Purpose: MySQL/InnoDB schema for the personal handwritten-notes system. It is deliberately only the durable data model for now; it does not imply reMarkable ingestion, email handling, OpenAI calls, PDF generation, cron jobs, or UI automation.
+
+Design principle:
+- `capture -> interpret -> events -> structured state`
+- Original source documents remain traceable through document/page provenance and event history.
+
+Documentation:
+- Full schema notes live in `/opt/scraper/docs/personal_knowledge_schema.md`.
+- Migration: `/opt/scraper/migrations/2026-08-13_personal_knowledge_system_mysql.sql`.
+- Development-only fixture: `/opt/scraper/fixtures/personal_knowledge_dev_fixture.sql`.
+- Rollback-only verifier: `/opt/scraper/scripts/verify_personal_knowledge_schema.js`.
+
+Core tables:
+- `personal_source_documents`: every retained source document, with `source_type`, filename/title, MIME type, `storage_ref`, SHA-256 dedupe hash, received/document-created timestamps, transcription/cleaned text/summary, processing status, and metadata JSON. Do not store PDF binaries in MySQL.
+- `personal_document_pages`: page-level records for source documents, including page transcription/cleaned text and optional rendered image/file reference.
+- `personal_projects`: projects/areas with status and soft archive.
+- `personal_tasks`: structured tasks with internal integer `id`, external `uuid`, separate human-visible `task_ref` such as `T184`, status/priority/due fields, optional primary project, and source document/page pointers.
+- `personal_notes`: non-task notes with optional project and source document/page pointers.
+- `personal_people`: lightweight people records with name, organisation, optional email, and metadata JSON.
+- `personal_tags`: lightweight tags.
+- `personal_events`: interpreted actions/audit log, e.g. `create_task`, `update_task`, `complete_task`, `cancel_task`, `create_note`, `update_note`, `assign_project`, `associate_person`.
+- `personal_event_targets`: additional entities affected by an event.
+- `personal_event_links`: semantic event/entity links such as `created`, `updated`, `completed`, or `associated`.
+
+Relationship tables:
+- `personal_project_documents`
+- `personal_task_projects`
+- `personal_task_people`
+- `personal_note_people`
+- `personal_note_tasks`
+- `personal_task_tags`
+- `personal_project_tags`
+- `personal_note_tags`
+
+Status conventions:
+- Task statuses are `VARCHAR`; current expected values are `open`, `completed`, `waiting`, `cancelled`.
+- Event statuses are `VARCHAR`; current expected values are `proposed`, `applied`, `rejected`, `failed`.
+- Source document processing statuses are `VARCHAR`; current expected values include `received`, `transcribed`, `interpreted`, `applied`, `failed`.
+
+Provenance notes:
+- Prefer recording both direct provenance (`source_document_id`, `source_page_id`) and event provenance (`personal_events`, `personal_event_links`) when applying interpreted actions.
+- Example chain: task `T184` -> `personal_event_links` / `personal_events` -> `personal_document_pages` -> `personal_source_documents.storage_ref`.
+- Keep `task_ref` stable and never reuse it; later handwritten updates may refer to it directly.
+- Normal lifecycle should use statuses and `archived_at`, not destructive deletes.
 
 ## Worker/Queue Notes
 - `worker_listen.js` subscribes to PostgreSQL `LISTEN` channel `scrape_job_created`.

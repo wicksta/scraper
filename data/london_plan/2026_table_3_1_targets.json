@@ -1,0 +1,182 @@
+{
+  "source_url": "https://www.london.gov.uk/3-delivering-homes-and-neighbourhoods-londoners-need#hn1-increasing-londons-housing-stock-1145736-title",
+  "source_table": "Table 3.1",
+  "status": "Draft London Plan (2026)",
+  "publication_date": "2026-07-16",
+  "period_start": "2027/28",
+  "period_end": "2036/37",
+  "period_years": 10,
+  "london_total": 558451,
+  "authorities": [
+    {
+      "lpa": "City of London",
+      "ons_code": "E09000001",
+      "total_housing_target": 1716
+    },
+    {
+      "lpa": "Barking and Dagenham",
+      "ons_code": "E09000002",
+      "total_housing_target": 9698
+    },
+    {
+      "lpa": "Barnet",
+      "ons_code": "E09000003",
+      "total_housing_target": 32849
+    },
+    {
+      "lpa": "Bexley",
+      "ons_code": "E09000004",
+      "total_housing_target": 6217
+    },
+    {
+      "lpa": "Brent",
+      "ons_code": "E09000005",
+      "total_housing_target": 25316
+    },
+    {
+      "lpa": "Bromley",
+      "ons_code": "E09000006",
+      "total_housing_target": 8283
+    },
+    {
+      "lpa": "Camden",
+      "ons_code": "E09000007",
+      "total_housing_target": 12085
+    },
+    {
+      "lpa": "Croydon",
+      "ons_code": "E09000008",
+      "total_housing_target": 21544
+    },
+    {
+      "lpa": "Ealing",
+      "ons_code": "E09000009",
+      "total_housing_target": 31979
+    },
+    {
+      "lpa": "Enfield",
+      "ons_code": "E09000010",
+      "total_housing_target": 21062
+    },
+    {
+      "lpa": "Greenwich",
+      "ons_code": "E09000011",
+      "total_housing_target": 27850
+    },
+    {
+      "lpa": "Hackney",
+      "ons_code": "E09000012",
+      "total_housing_target": 10582
+    },
+    {
+      "lpa": "Hammersmith and Fulham",
+      "ons_code": "E09000013",
+      "total_housing_target": 16859
+    },
+    {
+      "lpa": "Haringey",
+      "ons_code": "E09000014",
+      "total_housing_target": 18911
+    },
+    {
+      "lpa": "Harrow",
+      "ons_code": "E09000015",
+      "total_housing_target": 12010
+    },
+    {
+      "lpa": "Havering",
+      "ons_code": "E09000016",
+      "total_housing_target": 21712
+    },
+    {
+      "lpa": "Hillingdon",
+      "ons_code": "E09000017",
+      "total_housing_target": 24030
+    },
+    {
+      "lpa": "Hounslow",
+      "ons_code": "E09000018",
+      "total_housing_target": 17975
+    },
+    {
+      "lpa": "Islington",
+      "ons_code": "E09000019",
+      "total_housing_target": 6768
+    },
+    {
+      "lpa": "Kensington and Chelsea",
+      "ons_code": "E09000020",
+      "total_housing_target": 5904
+    },
+    {
+      "lpa": "Kingston upon Thames",
+      "ons_code": "E09000021",
+      "total_housing_target": 6872
+    },
+    {
+      "lpa": "Lambeth",
+      "ons_code": "E09000022",
+      "total_housing_target": 16370
+    },
+    {
+      "lpa": "Lewisham",
+      "ons_code": "E09000023",
+      "total_housing_target": 13276
+    },
+    {
+      "lpa": "Merton",
+      "ons_code": "E09000024",
+      "total_housing_target": 17455
+    },
+    {
+      "lpa": "Newham",
+      "ons_code": "E09000025",
+      "total_housing_target": 26260
+    },
+    {
+      "lpa": "Redbridge",
+      "ons_code": "E09000026",
+      "total_housing_target": 16130
+    },
+    {
+      "lpa": "Richmond upon Thames",
+      "ons_code": "E09000027",
+      "total_housing_target": 5397
+    },
+    {
+      "lpa": "Southwark",
+      "ons_code": "E09000028",
+      "total_housing_target": 27799
+    },
+    {
+      "lpa": "Sutton",
+      "ons_code": "E09000029",
+      "total_housing_target": 4781
+    },
+    {
+      "lpa": "Tower Hamlets",
+      "ons_code": "E09000030",
+      "total_housing_target": 24704
+    },
+    {
+      "lpa": "Waltham Forest",
+      "ons_code": "E09000031",
+      "total_housing_target": 19072
+    },
+    {
+      "lpa": "Wandsworth",
+      "ons_code": "E09000032",
+      "total_housing_target": 23426
+    },
+    {
+      "lpa": "Westminster",
+      "ons_code": "E09000033",
+      "total_housing_target": 12224
+    },
+    {
+      "lpa": "OPDC",
+      "ons_code": null,
+      "total_housing_target": 11335
+    }
+  ]
+}

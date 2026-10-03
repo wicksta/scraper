@@ -1,0 +1,10 @@
+[Unit]
+Description=Run pending City and Westminster application status refresh every 12 hours
+
+[Timer]
+OnCalendar=*-*-* 00,12:15:00
+Persistent=true
+Unit=newmark-pending-application-refresh.service
+
+[Install]
+WantedBy=timers.target

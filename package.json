@@ -24,6 +24,8 @@
     "fetch:wcc-retrofit-lbc-documents": "node scripts/fetch_wcc_retrofit_lbc_documents.js",
     "ingest:newmark-cover-letters": "node scripts/ingest_newmark_cover_letters.js",
     "ingest:newmark-planning-statements": "node scripts/ingest_newmark_planning_statements.js",
+    "enrich:newmark-case-studies": "node scripts/enrich_newmark_case_studies.js",
+    "extract:newmark-case-study-images": "node scripts/extract_newmark_case_study_images.js",
     "rag:cover-letters": "node scripts/rag_cover_letter_search_responses.js",
     "refine:wcc-retrofit-lbc": "node scripts/refine_wcc_retrofit_lbc_candidates.js",
     "write:cover-letter": "node scripts/write_cover_letter_from_rag.js",

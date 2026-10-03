@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh pending City and Westminster application statuses from Postgres
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=james
+WorkingDirectory=/opt/scraper
+EnvironmentFile=/opt/scraper/.env
+ExecStart=/usr/bin/node /opt/scraper/scripts/refresh_pending_mysql_applications_from_pg.js --apply
+Nice=10
+
