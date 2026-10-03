@@ -3,6 +3,7 @@
 // or changing dashboard code. DOM/canvas are mocked; this is not a browser test.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -24,6 +25,38 @@ assert.equal(hash(annualBytes), metadata.files[ANNUAL_FILE]);
 assert.equal(hash(rankingBytes), metadata.files[RANKING_FILE]);
 assert.equal(annual.length, metadata.annual_records);
 assert.equal(rankings.length, metadata.ranking_population.count);
+
+function presentation(metadataPath) {
+  const result = spawnSync('php', ['-r', 'require $argv[1]; echo json_encode(dashboardAppealsDisplay($argv[2]));',
+    path.join(dashboardDir, 'appeals_metadata.php'), metadataPath], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  return JSON.parse(result.stdout);
+}
+const display = presentation(path.join(dataDir, METADATA_FILE));
+assert.ok(display.coveragePeriod);
+assert.ok(display.rankingPeriod);
+assert.ok(display.source.includes('Data updated:'));
+assert.ok(display.source.includes('Last checked:'));
+assert.ok(!display.source.includes('August 2025'));
+
+// A later importer metadata generation must change dates without a PHP edit.
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'appeals-display-'));
+try {
+  const fixture = path.join(fixtureDir, 'metadata.json');
+  fs.writeFileSync(fixture, JSON.stringify({
+    coverage: { first_quarter: '2016 Q1', last_quarter: '2026 Q4' },
+    ranking_period: { first_quarter: '2020 Q1', last_quarter: '2026 Q4' },
+    last_data_update: '2027-01-02T12:34:00Z', last_successful_check: '2027-01-09T13:45:00Z',
+  }));
+  const future = presentation(fixture);
+  assert.equal(future.coveragePeriod, 'January 2016 to December 2026');
+  assert.equal(future.rankingPeriod, 'January 2020 to December 2026');
+  assert.ok(future.source.includes('2 January 2027, 12:34 UTC'));
+  assert.ok(future.source.includes('9 January 2027, 13:45 UTC'));
+  fs.writeFileSync(fixture, '{invalid');
+  assert.equal(presentation(fixture).coveragePeriod, null);
+  assert.ok(presentation(path.join(fixtureDir, 'missing.json')).source.includes('Dataset period unavailable.'));
+} finally { fs.rmSync(fixtureDir, { recursive: true, force: true }); }
 
 function phpReader(filename, code, dataset) {
   const live = dataDir === path.join(dashboardDir, 'data');
@@ -69,12 +102,12 @@ for (const code of ['E09000033', 'E09000007']) {
   const chartConfigs = [];
   const errors = [];
   const context = vm.createContext({
-    source: '', stackedChartInstance: null, highlightLabelPlugin: {},
+    source: display.source, appealsDisplay: display, stackedChartInstance: null, highlightLabelPlugin: {},
     getGradientColor: () => '#fff',
     bootstrap: { Tooltip: class {} },
     document: {
       getElementById: id => {
-        if (!elements.has(id)) elements.set(id, { innerHTML: '', getContext: () => ({}) });
+        if (!elements.has(id)) elements.set(id, { innerHTML: '', getContext: () => ({}), addEventListener: () => {} });
         return elements.get(id);
       },
       querySelectorAll: () => [],
@@ -83,16 +116,23 @@ for (const code of ['E09000033', 'E09000007']) {
     Chart: class { constructor(_canvas, config) { chartConfigs.push(config); } destroy() {} },
     console: { error: (...args) => errors.push(args) },
   });
-  for (const name of ['loadAppealRankingCard', 'loadAppealDataCard', 'renderAppealOutcomeStackedChart']) {
+  for (const name of ['loadAppealRankingCard', 'loadAppealDataCard', 'loadAppealOutcomeStackedCard', 'renderAppealOutcomeStackedChart']) {
     vm.runInContext(functionSource(name), context);
   }
   context.loadAppealRankingCard(code);
   context.loadAppealDataCard(code);
+  context.loadAppealOutcomeStackedCard(code);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(errors.length, 0, JSON.stringify(errors));
   assert.ok(elements.get('appeal-ranking-card-container')?.innerHTML.includes('Appeal Overturn Rates'));
   assert.ok(elements.get('appeal-rate-card-container')?.innerHTML.includes('Appeals and Overturns'));
   assert.ok(elements.get('appeal-card-container')?.innerHTML.includes(metadata.coverage.last_quarter.slice(0, 4)));
+  for (const id of ['appeal-ranking-card-container', 'appeal-rate-card-container', 'appeal-card-container', 'appeal-outcome-chart-container']) {
+    assert.ok(elements.get(id)?.innerHTML.includes(display.coveragePeriod), `Missing coverage in ${id}`);
+    assert.ok(elements.get(id)?.innerHTML.includes('Last checked:'), `Missing freshness in ${id}`);
+  }
+  assert.ok(elements.get('appeal-ranking-card-container').innerHTML.includes(`Appeal Overturn Rates (${display.rankingPeriod})`));
+  assert.ok(elements.get('appeal-outcome-chart-container').innerHTML.includes(`Appeal Volumes per 100 Applications (${display.rankingPeriod})`));
   for (const kind of ['major', 'nonmajor']) {
     context.renderAppealOutcomeStackedChart(rankings, code, kind);
     const config = chartConfigs.at(-1);
@@ -109,4 +149,4 @@ for (const code of ['E09000033', 'E09000007']) {
 const missing = phpReader('appeal_data_fetcher.php', 'E00000000', ANNUAL_FILE);
 assert.equal(Object.keys(missing).length, 0);
 console.log(JSON.stringify({ status: 'passed', coverage: metadata.coverage, ranked_authorities: rankings.length,
-  checks: 'Existing PHP readers, annual table and ranking card renderers, and major/non-major chart configurations (mock DOM/canvas)', authorities: results }, null, 2));
+  checks: 'Existing PHP readers, metadata-driven dates and freshness (including future/missing metadata), annual/ranking/chart card renderers, and major/non-major chart configurations (mock DOM/canvas)', authorities: results }, null, 2));
